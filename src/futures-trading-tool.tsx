@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { TrendingUp, TrendingDown, AlertCircle, CheckCircle, XCircle, DollarSign, Target, Shield, Wifi, WifiOff } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { Wifi, WifiOff } from 'lucide-react';
 
 // TypeScript interfaces
 interface Position {
