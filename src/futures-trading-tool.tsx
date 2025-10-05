@@ -1,26 +1,171 @@
-import React, { useState, useMemo } from 'react';
-import { TrendingUp, TrendingDown, AlertCircle, CheckCircle, XCircle, DollarSign, Target, Shield } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { TrendingUp, TrendingDown, AlertCircle, CheckCircle, XCircle, DollarSign, Target, Shield, Wifi, WifiOff } from 'lucide-react';
+
+// TypeScript interfaces
+interface Position {
+  id: number;
+  symbol: string;
+  direction: 'LONG' | 'SHORT';
+  entry: number;
+  currentPrice: number;
+  avgEntry: number;
+  sl: number;
+  dca1: number;
+  dca2: number;
+  R: number;
+  tp1: number;
+  tp2: number;
+  tp3: number;
+  initialMargin: number;
+  positionSize: number;
+  dca1Executed: boolean;
+  dca2Executed: boolean;
+  tp1Closed: boolean;
+  tp2Closed: boolean;
+  tp3Closed: boolean;
+  unrealizedPNL: number;
+  remainingPercent: number;
+  autoUpdate: boolean;
+  totalFees: number; // Track total fees paid
+  editingMargin: boolean; // Toggle margin editing
+}
+
+interface FormData {
+  symbol: string;
+  direction: 'LONG' | 'SHORT';
+  entryPrice: string;
+}
+
+interface BinanceTickerData {
+  c: string; // Current price
+  s: string; // Symbol
+}
 
 const FuturesTradingTool = () => {
-  const [wallet, setWallet] = useState(906.3);
-  const [editingWallet, setEditingWallet] = useState(false);
-  const [tempWallet, setTempWallet] = useState('906.3');
-  const [positions, setPositions] = useState([]);
-  const [viewMode, setViewMode] = useState('cards'); // 'cards' or 'table'
-  const [formData, setFormData] = useState({
+  const [wallet, setWallet] = useState<number>(906.3);
+  const [editingWallet, setEditingWallet] = useState<boolean>(false);
+  const [tempWallet, setTempWallet] = useState<string>('906.3');
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
+  const [formData, setFormData] = useState<FormData>({
     symbol: '',
     direction: 'LONG',
     entryPrice: '',
   });
+
+  // Trading fee settings (Binance Futures default)
+  const [tradingFee, setTradingFee] = useState<number>(0.05); // 0.05% taker fee
+  const [showFeeSettings, setShowFeeSettings] = useState<boolean>(false);
+
+  // WebSocket connections
+  const wsConnections = useRef<Map<number, WebSocket>>(new Map());
+
+  // Setup WebSocket for price updates
+  useEffect(() => {
+    positions.forEach(pos => {
+      if (!pos.autoUpdate) {
+        // Close existing connection if auto-update is off
+        const existingWs = wsConnections.current.get(pos.id);
+        if (existingWs) {
+          existingWs.close();
+          wsConnections.current.delete(pos.id);
+        }
+        return;
+      }
+
+      // Don't create duplicate connections
+      if (wsConnections.current.has(pos.id)) return;
+
+      // Format symbol for Binance (e.g., BTCUSDT)
+      const binanceSymbol = `${pos.symbol.toLowerCase()}usdt`;
+      
+      // Binance Futures WebSocket
+      const ws = new WebSocket(`wss://fstream.binance.com/ws/${binanceSymbol}@ticker`);
+
+      ws.onmessage = (event) => {
+        try {
+          const data: BinanceTickerData = JSON.parse(event.data);
+          const price = parseFloat(data.c);
+          
+          if (!isNaN(price) && price > 0) {
+            updatePrice(pos.id, price);
+          }
+        } catch (error) {
+          console.error('Error parsing WebSocket data:', error);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error(`WebSocket error for ${pos.symbol}:`, error);
+      };
+
+      ws.onclose = () => {
+        wsConnections.current.delete(pos.id);
+      };
+
+      wsConnections.current.set(pos.id, ws);
+    });
+
+    // Cleanup removed positions
+    wsConnections.current.forEach((ws, posId) => {
+      const positionExists = positions.find(p => p.id === posId);
+      if (!positionExists) {
+        ws.close();
+        wsConnections.current.delete(posId);
+      }
+    });
+
+    // Cleanup on unmount
+    return () => {
+      wsConnections.current.forEach(ws => ws.close());
+      wsConnections.current.clear();
+    };
+  }, [positions]);
+
+  // Toggle auto-update for a position
+  const toggleAutoUpdate = (posId: number) => {
+    setPositions(positions.map(pos => 
+      pos.id === posId ? { ...pos, autoUpdate: !pos.autoUpdate } : pos
+    ));
+  };
+
+  // Calculate trading fee
+  const calculateFee = (positionValue: number): number => {
+    return positionValue * (tradingFee / 100);
+  };
+
+  // Update margin for a position
+  const updateMargin = (posId: number, newMargin: number) => {
+    setPositions(positions.map(pos => {
+      if (pos.id !== posId) return pos;
+      
+      // Recalculate position size based on new margin
+      const newPositionSize = newMargin * 10;
+      
+      return {
+        ...pos,
+        initialMargin: newMargin,
+        positionSize: newPositionSize,
+        editingMargin: false,
+      };
+    }));
+  };
+
+  // Toggle margin editing
+  const toggleMarginEdit = (posId: number) => {
+    setPositions(positions.map(pos => 
+      pos.id === posId ? { ...pos, editingMargin: !pos.editingMargin } : pos
+    ));
+  };
 
   // Tính phân bổ vốn
   const allocation = useMemo(() => ({
     initial: wallet * 0.45,
     dca: wallet * 0.40,
     emergency: wallet * 0.15,
-    perTradeInitial: wallet * 0.045, // $41
-    perTradeDCA1: wallet * 0.024,    // $22
-    perTradeDCA2: wallet * 0.016,    // $14
+    perTradeInitial: wallet * 0.045,
+    perTradeDCA1: wallet * 0.024,
+    perTradeDCA2: wallet * 0.016,
   }), [wallet]);
 
   // Tính margin level và PNL
@@ -48,9 +193,9 @@ const FuturesTradingTool = () => {
   }, [positions, wallet, allocation]);
 
   // Tính SL, TP, DCA cho position mới
-  const calculateLevels = (entry, direction) => {
+  const calculateLevels = (entry: string, direction: 'LONG' | 'SHORT') => {
     const entryNum = parseFloat(entry);
-    if (!entryNum) return null;
+    if (!entryNum || isNaN(entryNum)) return null;
 
     const sl = direction === 'LONG' 
       ? entryNum * 0.93 
@@ -80,15 +225,21 @@ const FuturesTradingTool = () => {
     const levels = calculateLevels(formData.entryPrice, formData.direction);
     if (!levels) return;
 
-    const newPosition = {
+    // Calculate margin after fee
+    const baseMargin = allocation.perTradeInitial;
+    const positionValue = baseMargin * 10;
+    const openFee = calculateFee(positionValue);
+    const actualMargin = baseMargin - openFee;
+
+    const newPosition: Position = {
       id: Date.now(),
       symbol: formData.symbol.toUpperCase(),
       direction: formData.direction,
       ...levels,
       currentPrice: levels.entry,
       avgEntry: levels.entry,
-      initialMargin: allocation.perTradeInitial,
-      positionSize: allocation.perTradeInitial * 10,
+      initialMargin: actualMargin,
+      positionSize: actualMargin * 10,
       dca1Executed: false,
       dca2Executed: false,
       tp1Closed: false,
@@ -96,6 +247,9 @@ const FuturesTradingTool = () => {
       tp3Closed: false,
       unrealizedPNL: 0,
       remainingPercent: 100,
+      autoUpdate: true,
+      totalFees: openFee,
+      editingMargin: false,
     };
 
     setPositions([...positions, newPosition]);
@@ -103,7 +257,7 @@ const FuturesTradingTool = () => {
   };
 
   // Execute DCA
-  const executeDCA = (posId, dcaLevel) => {
+  const executeDCA = (posId: number, dcaLevel: 1 | 2) => {
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
@@ -111,8 +265,13 @@ const FuturesTradingTool = () => {
       if ((isFirst && pos.dca1Executed) || (!isFirst && pos.dca2Executed)) return pos;
 
       const dcaPrice = isFirst ? pos.dca1 : pos.dca2;
-      const dcaMargin = isFirst ? allocation.perTradeDCA1 : allocation.perTradeDCA2;
-      const dcaPosition = dcaMargin * 10;
+      const baseDcaMargin = isFirst ? allocation.perTradeDCA1 : allocation.perTradeDCA2;
+      
+      // Calculate DCA fee
+      const dcaPositionValue = baseDcaMargin * 10;
+      const dcaFee = calculateFee(dcaPositionValue);
+      const actualDcaMargin = baseDcaMargin - dcaFee;
+      const dcaPosition = actualDcaMargin * 10;
 
       const totalPosition = pos.positionSize + dcaPosition;
       const avgEntry = (pos.positionSize * pos.avgEntry + dcaPosition * dcaPrice) / totalPosition;
@@ -126,7 +285,8 @@ const FuturesTradingTool = () => {
         ...pos,
         avgEntry,
         positionSize: totalPosition,
-        initialMargin: pos.initialMargin + dcaMargin,
+        initialMargin: pos.initialMargin + actualDcaMargin,
+        totalFees: pos.totalFees + dcaFee,
         R: newR,
         tp1: newTP1,
         tp2: newTP2,
@@ -137,13 +297,13 @@ const FuturesTradingTool = () => {
   };
 
   // Close TP level
-  const closeTP = (posId, tpLevel) => {
+  const closeTP = (posId: number, tpLevel: 1 | 2 | 3) => {
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
-      let closePercent = 40; // TP1
-      if (tpLevel === 2) closePercent = 30; // TP2
-      if (tpLevel === 3) closePercent = 30; // TP3
+      let closePercent = 40;
+      if (tpLevel === 2) closePercent = 30;
+      if (tpLevel === 3) closePercent = 30;
 
       const newRemaining = pos.remainingPercent - closePercent;
       
@@ -156,7 +316,7 @@ const FuturesTradingTool = () => {
   };
 
   // Update current price và tính PNL
-  const updatePrice = (posId, newPrice) => {
+  const updatePrice = (posId: number, newPrice: number) => {
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
@@ -175,7 +335,7 @@ const FuturesTradingTool = () => {
   };
 
   // Update Stop Loss và recalculate R, TP
-  const updateStopLoss = (posId, newSL) => {
+  const updateStopLoss = (posId: number, newSL: number) => {
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
@@ -196,21 +356,14 @@ const FuturesTradingTool = () => {
   };
 
   // Update Stop Loss by percentage
-  const updateStopLossByPercent = (posId, percent) => {
+  const updateStopLossByPercent = (posId: number, percent: string) => {
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
       const percentNum = parseFloat(percent);
-      if (!percentNum) return pos;
+      if (!percentNum || isNaN(percentNum)) return pos;
 
-      // For LONG: negative % means SL below entry
-      // For SHORT: positive % means SL above entry
-      let newSL;
-      if (pos.direction === 'LONG') {
-        newSL = pos.avgEntry * (1 + percentNum / 100);
-      } else {
-        newSL = pos.avgEntry * (1 + percentNum / 100);
-      }
+      const newSL = pos.avgEntry * (1 + percentNum / 100);
 
       const newR = Math.abs(pos.avgEntry - newSL);
       const newTP1 = pos.direction === 'LONG' ? pos.avgEntry + newR : pos.avgEntry - newR;
@@ -229,14 +382,14 @@ const FuturesTradingTool = () => {
   };
 
   // Close position
-  const closePosition = (posId) => {
+  const closePosition = (posId: number) => {
     setPositions(positions.filter(pos => pos.id !== posId));
   };
 
   // Update wallet
   const updateWallet = () => {
     const newWallet = parseFloat(tempWallet);
-    if (newWallet && newWallet > 0) {
+    if (newWallet && newWallet > 0 && !isNaN(newWallet)) {
       setWallet(newWallet);
       setEditingWallet(false);
     }
@@ -248,7 +401,7 @@ const FuturesTradingTool = () => {
   };
 
   // Margin level color
-  const getMarginColor = (level) => {
+  const getMarginColor = (level: number) => {
     if (level >= 200) return 'text-green-400';
     if (level >= 150) return 'text-green-300';
     if (level >= 130) return 'text-yellow-400';
@@ -256,7 +409,7 @@ const FuturesTradingTool = () => {
     return 'text-red-400';
   };
 
-  const getMarginBg = (level) => {
+  const getMarginBg = (level: number) => {
     if (level >= 200) return 'bg-green-500/10';
     if (level >= 150) return 'bg-green-500/10';
     if (level >= 130) return 'bg-yellow-500/10';
@@ -286,7 +439,7 @@ const FuturesTradingTool = () => {
                   step="0.01"
                   value={tempWallet}
                   onChange={(e) => setTempWallet(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && updateWallet()}
+                  onKeyDown={(e) => e.key === 'Enter' && updateWallet()}
                   className="bg-gray-700 border border-blue-500 rounded px-3 py-1 w-32 font-mono text-lg focus:outline-none"
                   autoFocus
                 />
@@ -315,6 +468,28 @@ const FuturesTradingTool = () => {
                 >
                   Edit
                 </button>
+              </div>
+            )}
+          </div>
+          
+          {/* Trading Fee Settings */}
+          <div className="flex items-center justify-center gap-2 mt-2">
+            <button
+              onClick={() => setShowFeeSettings(!showFeeSettings)}
+              className="text-sm text-gray-400 hover:text-gray-200 underline"
+            >
+              Trading Fee: {tradingFee}%
+            </button>
+            {showFeeSettings && (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={tradingFee}
+                  onChange={(e) => setTradingFee(parseFloat(e.target.value) || 0.05)}
+                  className="bg-gray-700 border border-gray-600 rounded px-2 py-1 w-20 text-sm focus:outline-none"
+                />
+                <span className="text-sm text-gray-400">%</span>
               </div>
             )}
           </div>
@@ -392,7 +567,7 @@ const FuturesTradingTool = () => {
             
             <select
               value={formData.direction}
-              onChange={(e) => setFormData({...formData, direction: e.target.value})}
+              onChange={(e) => setFormData({...formData, direction: e.target.value as 'LONG' | 'SHORT'})}
               className="bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500"
             >
               <option value="LONG">LONG 📈</option>
@@ -524,13 +699,27 @@ const FuturesTradingTool = () => {
                           <div className="text-blue-400">{pos.avgEntry.toFixed(6)}</div>
                         </td>
                         <td className="p-3">
-                          <input
-                            type="number"
-                            step="any"
-                            value={pos.currentPrice}
-                            onChange={(e) => updatePrice(pos.id, parseFloat(e.target.value) || 0)}
-                            className="bg-gray-700 border border-gray-600 rounded px-2 py-1 font-mono text-xs w-28 focus:outline-none focus:border-blue-500"
-                          />
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              step="any"
+                              value={pos.currentPrice}
+                              onChange={(e) => updatePrice(pos.id, parseFloat(e.target.value) || 0)}
+                              disabled={pos.autoUpdate}
+                              className={`bg-gray-700 border border-gray-600 rounded px-2 py-1 font-mono text-xs w-24 focus:outline-none focus:border-blue-500 ${
+                                pos.autoUpdate ? 'opacity-50' : ''
+                              }`}
+                            />
+                            <button
+                              onClick={() => toggleAutoUpdate(pos.id)}
+                              className={`p-1 rounded ${
+                                pos.autoUpdate ? 'text-green-400' : 'text-gray-500'
+                              }`}
+                              title={pos.autoUpdate ? 'Auto (Binance)' : 'Manual'}
+                            >
+                              {pos.autoUpdate ? <Wifi size={14} /> : <WifiOff size={14} />}
+                            </button>
+                          </div>
                           <div className={`text-xs mt-1 ${priceChangePercent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                             {priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%
                           </div>
@@ -545,8 +734,45 @@ const FuturesTradingTool = () => {
                         </td>
                         <td className="p-3 text-xs">
                           <div>${pos.positionSize.toFixed(0)}</div>
-                          <div className="text-gray-400">${pos.initialMargin.toFixed(0)}</div>
+                          
+                          {/* Margin with edit */}
+                          {pos.editingMargin ? (
+                            <div className="flex items-center gap-1">
+                              <span className="text-gray-500">$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                defaultValue={pos.initialMargin.toFixed(2)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    const input = e.target as HTMLInputElement;
+                                    updateMargin(pos.id, parseFloat(input.value) || pos.initialMargin);
+                                  }
+                                }}
+                                className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-14 text-xs"
+                                autoFocus
+                              />
+                              <button
+                                onClick={() => toggleMarginEdit(pos.id)}
+                                className="text-gray-400 hover:text-gray-200"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-1 text-gray-400">
+                              <span>${pos.initialMargin.toFixed(0)}</span>
+                              <button
+                                onClick={() => toggleMarginEdit(pos.id)}
+                                className="text-blue-400 hover:text-blue-300"
+                              >
+                                ✎
+                              </button>
+                            </div>
+                          )}
+                          
                           <div className="text-purple-400">{pos.remainingPercent}%</div>
+                          <div className="text-orange-400">Fee: ${pos.totalFees.toFixed(2)}</div>
                         </td>
                         <td className="p-3">
                           <div className={`font-bold ${pos.unrealizedPNL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -643,7 +869,10 @@ const FuturesTradingTool = () => {
                       step="any"
                       value={pos.currentPrice}
                       onChange={(e) => updatePrice(pos.id, parseFloat(e.target.value) || 0)}
-                      className="bg-gray-700 border border-gray-600 rounded px-3 py-1 font-mono flex-1 focus:outline-none focus:border-blue-500"
+                      disabled={pos.autoUpdate}
+                      className={`bg-gray-700 border border-gray-600 rounded px-3 py-1 font-mono flex-1 focus:outline-none focus:border-blue-500 ${
+                        pos.autoUpdate ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
                     />
                     <div className="text-sm text-gray-400 w-24">
                       {pos.direction === 'LONG' 
@@ -651,6 +880,17 @@ const FuturesTradingTool = () => {
                         : `${((pos.avgEntry - pos.currentPrice) / pos.avgEntry * 100).toFixed(2)}%`
                       }
                     </div>
+                    <button
+                      onClick={() => toggleAutoUpdate(pos.id)}
+                      className={`px-3 py-1 rounded text-sm font-semibold transition-colors ${
+                        pos.autoUpdate 
+                          ? 'bg-green-600 hover:bg-green-700 text-white' 
+                          : 'bg-gray-600 hover:bg-gray-700 text-gray-300'
+                      }`}
+                      title={pos.autoUpdate ? 'Auto-update ON (Binance)' : 'Auto-update OFF (Manual)'}
+                    >
+                      {pos.autoUpdate ? <Wifi size={16} /> : <WifiOff size={16} />}
+                    </button>
                   </div>
 
                   {/* Stop Loss Input */}
@@ -728,8 +968,44 @@ const FuturesTradingTool = () => {
                     <div className="bg-blue-900/20 p-2 rounded">
                       <div className="text-gray-400 text-xs">Position</div>
                       <div className="font-mono">${pos.positionSize.toFixed(2)}</div>
-                      <div className="text-xs text-gray-400">Margin: ${pos.initialMargin.toFixed(2)}</div>
+                      
+                      {/* Margin Editor */}
+                      {pos.editingMargin ? (
+                        <div className="flex items-center gap-1 mt-1">
+                          <input
+                            type="number"
+                            step="0.01"
+                            defaultValue={pos.initialMargin.toFixed(2)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                const input = e.target as HTMLInputElement;
+                                updateMargin(pos.id, parseFloat(input.value) || pos.initialMargin);
+                              }
+                            }}
+                            className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-16 text-xs focus:outline-none"
+                            autoFocus
+                          />
+                          <button
+                            onClick={() => toggleMarginEdit(pos.id)}
+                            className="text-xs text-gray-400 hover:text-gray-200"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <div className="text-xs text-gray-400">Margin: ${pos.initialMargin.toFixed(2)}</div>
+                          <button
+                            onClick={() => toggleMarginEdit(pos.id)}
+                            className="text-xs text-blue-400 hover:text-blue-300"
+                          >
+                            ✎
+                          </button>
+                        </div>
+                      )}
+                      
                       <div className="text-xs text-purple-400">Remaining: {pos.remainingPercent}%</div>
+                      <div className="text-xs text-orange-400">Fees: ${pos.totalFees.toFixed(2)}</div>
                     </div>
                   </div>
 
@@ -842,6 +1118,16 @@ const FuturesTradingTool = () => {
                 <div>• Max 3 full DCA positions</div>
                 <div>• Never move SL down</div>
               </div>
+            </div>
+          </div>
+          <div className="mt-4 p-3 bg-blue-900/20 border border-blue-600/30 rounded">
+            <div className="flex items-center gap-2 text-blue-400 font-semibold mb-1">
+              <Wifi size={16} />
+              <span>Auto Price Update (Binance)</span>
+            </div>
+            <div className="text-xs text-gray-300">
+              Click the <Wifi size={12} className="inline" /> icon to enable/disable real-time price updates from Binance Futures. 
+              Symbol format: BTCUSDT, ETHUSDT, etc.
             </div>
           </div>
         </div>
