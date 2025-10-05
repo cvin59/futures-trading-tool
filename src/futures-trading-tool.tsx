@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Wifi, WifiOff } from 'lucide-react';
+import { Wifi, WifiOff, Cloud, CloudOff, RefreshCw, DollarSign, LogOut, User } from 'lucide-react';
+import { onAuthStateChanged } from 'firebase/auth';
+import { saveToFirestore, loadFromFirestore, subscribeToFirestore, type TradingData, signIn, signUp, signOut, auth } from './lib/firebase';
 
 // TypeScript interfaces
 interface Position {
@@ -42,10 +44,49 @@ interface BinanceTickerData {
 }
 
 const FuturesTradingTool = () => {
-  const [wallet, setWallet] = useState<number>(906.3);
+  const [wallet, setWallet] = useState<number>(() => {
+    // Load from localStorage on init
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('futures-wallet');
+      return saved ? parseFloat(saved) : 906.3;
+    }
+    return 906.3;
+  });
+  
   const [editingWallet, setEditingWallet] = useState<boolean>(false);
-  const [tempWallet, setTempWallet] = useState<string>('906.3');
-  const [positions, setPositions] = useState<Position[]>([]);
+  
+  const [tempWallet, setTempWallet] = useState<string>(() => {
+    // Initialize from loaded wallet
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('futures-wallet');
+      return saved || '906.3';
+    }
+    return '906.3';
+  });
+  
+  const [positions, setPositions] = useState<Position[]>(() => {
+    // Load from localStorage on init
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('futures-positions');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          // Reset autoUpdate and editing states on load
+          return parsed.map((pos: Position) => ({
+            ...pos,
+            autoUpdate: false, // Start with manual mode for safety
+            editingMargin: false,
+            // Ensure currentPrice is set (fallback to avgEntry if missing)
+            currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
+          }));
+        } catch (e) {
+          console.error('Error loading positions:', e);
+        }
+      }
+    }
+    return [];
+  });
+  
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [formData, setFormData] = useState<FormData>({
     symbol: '',
@@ -54,15 +95,237 @@ const FuturesTradingTool = () => {
   });
 
   // Trading fee settings (Binance Futures default)
-  const [tradingFee, setTradingFee] = useState<number>(0.05); // 0.05% taker fee
+  const [tradingFee, setTradingFee] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('futures-fee');
+      return saved ? parseFloat(saved) : 0.05;
+    }
+    return 0.05;
+  });
+  
   const [showFeeSettings, setShowFeeSettings] = useState<boolean>(false);
+  
+  // Temp margin editing values
+  const [tempMarginValues, setTempMarginValues] = useState<Map<number, string>>(new Map());
+
+  // Firebase sync state
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('offline');
+  const [lastSyncTime, setLastSyncTime] = useState<number>(0);
+  const syncTimeoutRef = useRef<number | null>(null);
+  const isSyncingRef = useRef(false);
+
+  // Authentication state
+  const [user, setUser] = useState<any>(null);
+  const [showAuthModal, setShowAuthModal] = useState<boolean>(false);
+  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authForm, setAuthForm] = useState({ email: '', password: '' });
+  const [authError, setAuthError] = useState<string>('');
+  const [authLoading, setAuthLoading] = useState<boolean>(false);
 
   // WebSocket connections
   const wsConnections = useRef<Map<number, WebSocket>>(new Map());
+  
+  // Track autoUpdate status to avoid unnecessary re-renders
+  const autoUpdateStatus = useRef<Map<number, boolean>>(new Map());
+
+  // Save to localStorage whenever positions change
+  useEffect(() => {
+    if (typeof window !== 'undefined' && positions.length >= 0) {
+      console.log('💾 Saving to localStorage:', positions.length, 'positions');
+      localStorage.setItem('futures-positions', JSON.stringify(positions));
+      console.log('✅ LocalStorage saved');
+    }
+  }, [positions]);
+
+  // Save wallet to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('futures-wallet', wallet.toString());
+    }
+  }, [wallet]);
+
+  // Save trading fee to localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('futures-fee', tradingFee.toString());
+    }
+  }, [tradingFee]);
+
+  // Listen to auth state changes
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      console.log('👤 Auth state changed:', currentUser ? currentUser.uid : 'No user');
+      setUser(currentUser);
+      
+      if (!currentUser) {
+        setSyncStatus('offline');
+        setShowAuthModal(true);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Handle login/signup
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthLoading(true);
+
+    try {
+      let result;
+      if (authMode === 'login') {
+        result = await signIn(authForm.email, authForm.password);
+      } else {
+        result = await signUp(authForm.email, authForm.password);
+      }
+
+      if (result.success) {
+        setShowAuthModal(false);
+        setAuthForm({ email: '', password: '' });
+      } else {
+        setAuthError(result.error || 'Authentication failed');
+      }
+    } catch (error: any) {
+      setAuthError(error.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // Handle logout
+  const handleLogout = async () => {
+    if (confirm('🔒 Log out? Your data will sync back when you log in again.')) {
+      await signOut();
+      setShowAuthModal(true);
+    }
+  };
+
+  // Load from Firebase on mount
+  useEffect(() => {
+    const loadFirebaseData = async () => {
+      console.log('🔥 Firebase: Starting load...');
+      setSyncStatus('syncing');
+      try {
+        const data = await loadFromFirestore();
+        console.log('🔥 Firebase: Data loaded:', data);
+        if (data) {
+          // Only update if Firebase data is newer
+          const localTimestamp = parseInt(localStorage.getItem('futures-timestamp') || '0');
+          console.log('🔥 Firebase timestamp:', data.lastUpdated, 'vs Local:', localTimestamp);
+          if (data.lastUpdated > localTimestamp) {
+            console.log('🔥 Firebase: Updating from cloud data');
+            setPositions(data.positions.map((pos: Position) => ({
+              ...pos,
+              autoUpdate: false,
+              editingMargin: false,
+              currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
+            })));
+            setWallet(data.wallet);
+            setTradingFee(data.tradingFee);
+            setLastSyncTime(data.lastUpdated);
+            localStorage.setItem('futures-timestamp', data.lastUpdated.toString());
+          } else {
+            console.log('🔥 Firebase: Local data is newer, skipping');
+          }
+        } else {
+          console.log('🔥 Firebase: No data found');
+        }
+        setSyncStatus('synced');
+        console.log('✅ Firebase: Load complete');
+      } catch (error) {
+        console.error('❌ Firebase: Load failed:', error);
+        setSyncStatus('error');
+      }
+    };
+
+    loadFirebaseData();
+
+    // Subscribe to real-time updates
+    const unsubscribe = subscribeToFirestore((data) => {
+      if (data && !isSyncingRef.current) {
+        const localTimestamp = parseInt(localStorage.getItem('futures-timestamp') || '0');
+        if (data.lastUpdated > localTimestamp) {
+          setPositions(data.positions.map((pos: Position) => ({
+            ...pos,
+            autoUpdate: false,
+            editingMargin: false,
+            currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
+          })));
+          setWallet(data.wallet);
+          setTradingFee(data.tradingFee);
+          setLastSyncTime(data.lastUpdated);
+          localStorage.setItem('futures-timestamp', data.lastUpdated.toString());
+          setSyncStatus('synced');
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Save to Firebase (debounced)
+  useEffect(() => {
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+
+    syncTimeoutRef.current = setTimeout(async () => {
+      if (positions.length >= 0) {
+        console.log('🔥 Firebase: Starting save...');
+        isSyncingRef.current = true;
+        setSyncStatus('syncing');
+        
+        const data: TradingData = {
+          wallet,
+          tradingFee,
+          positions: positions.map(pos => ({
+            ...pos,
+            autoUpdate: false,
+            editingMargin: false,
+          })),
+          lastUpdated: Date.now(),
+        };
+
+        console.log('🔥 Firebase: Saving data:', data);
+        const success = await saveToFirestore(data);
+        console.log('🔥 Firebase: Save result:', success);
+        
+        if (success) {
+          setLastSyncTime(data.lastUpdated);
+          localStorage.setItem('futures-timestamp', data.lastUpdated.toString());
+          setSyncStatus('synced');
+          console.log('✅ Firebase: Save successful');
+        } else {
+          setSyncStatus('error');
+          console.error('❌ Firebase: Save failed');
+        }
+        
+        isSyncingRef.current = false;
+      }
+    }, 2000); // Debounce 2 seconds
+
+    return () => {
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+      }
+    };
+  }, [positions, wallet, tradingFee]);
 
   // Setup WebSocket for price updates
   useEffect(() => {
     positions.forEach(pos => {
+      const prevAutoUpdate = autoUpdateStatus.current.get(pos.id);
+      const autoUpdateChanged = prevAutoUpdate !== pos.autoUpdate;
+      
+      // Update tracking
+      autoUpdateStatus.current.set(pos.id, pos.autoUpdate);
+      
       if (!pos.autoUpdate) {
         // Close existing connection if auto-update is off
         const existingWs = wsConnections.current.get(pos.id);
@@ -73,37 +336,61 @@ const FuturesTradingTool = () => {
         return;
       }
 
-      // Don't create duplicate connections
-      if (wsConnections.current.has(pos.id)) return;
-
-      // Format symbol for Binance (e.g., BTCUSDT)
-      const binanceSymbol = `${pos.symbol.toLowerCase()}usdt`;
-      
-      // Binance Futures WebSocket
-      const ws = new WebSocket(`wss://fstream.binance.com/ws/${binanceSymbol}@ticker`);
-
-      ws.onmessage = (event) => {
-        try {
-          const data: BinanceTickerData = JSON.parse(event.data);
-          const price = parseFloat(data.c);
-          
-          if (!isNaN(price) && price > 0) {
-            updatePrice(pos.id, price);
-          }
-        } catch (error) {
-          console.error('Error parsing WebSocket data:', error);
+      // Only create new connection if autoUpdate just turned on or doesn't exist
+      if (!wsConnections.current.has(pos.id) || autoUpdateChanged) {
+        // Close existing if any
+        const existingWs = wsConnections.current.get(pos.id);
+        if (existingWs) {
+          existingWs.close();
         }
-      };
 
-      ws.onerror = (error) => {
-        console.error(`WebSocket error for ${pos.symbol}:`, error);
-      };
+        // Format symbol for Binance (e.g., BTCUSDT)
+        const binanceSymbol = `${pos.symbol.toLowerCase()}usdt`;
+        
+        // Binance Futures WebSocket
+        const ws = new WebSocket(`wss://fstream.binance.com/ws/${binanceSymbol}@ticker`);
 
-      ws.onclose = () => {
-        wsConnections.current.delete(pos.id);
-      };
+        ws.onmessage = (event) => {
+          try {
+            const data: BinanceTickerData = JSON.parse(event.data);
+            const price = parseFloat(data.c);
+            
+            if (!isNaN(price) && price > 0) {
+              // Only update if autoUpdate is still enabled
+              setPositions(prevPositions => {
+                return prevPositions.map(p => {
+                  if (p.id === pos.id && p.autoUpdate) {
+                    const priceChange = p.direction === 'LONG'
+                      ? (price - p.avgEntry) / p.avgEntry
+                      : (p.avgEntry - price) / p.avgEntry;
 
-      wsConnections.current.set(pos.id, ws);
+                    const pnl = p.positionSize * priceChange * (p.remainingPercent / 100);
+
+                    return {
+                      ...p,
+                      currentPrice: price,
+                      unrealizedPNL: pnl,
+                    };
+                  }
+                  return p;
+                });
+              });
+            }
+          } catch (error) {
+            console.error('Error parsing WebSocket data:', error);
+          }
+        };
+
+        ws.onerror = (error) => {
+          console.error(`WebSocket error for ${pos.symbol}:`, error);
+        };
+
+        ws.onclose = () => {
+          wsConnections.current.delete(pos.id);
+        };
+
+        wsConnections.current.set(pos.id, ws);
+      }
     });
 
     // Cleanup removed positions
@@ -112,6 +399,7 @@ const FuturesTradingTool = () => {
       if (!positionExists) {
         ws.close();
         wsConnections.current.delete(posId);
+        autoUpdateStatus.current.delete(posId);
       }
     });
 
@@ -119,8 +407,9 @@ const FuturesTradingTool = () => {
     return () => {
       wsConnections.current.forEach(ws => ws.close());
       wsConnections.current.clear();
+      autoUpdateStatus.current.clear();
     };
-  }, [positions]);
+  }, [positions]); // Only re-run when autoUpdate changes
 
   // Toggle auto-update for a position
   const toggleAutoUpdate = (posId: number) => {
@@ -149,13 +438,40 @@ const FuturesTradingTool = () => {
         editingMargin: false,
       };
     }));
+    
+    // Clear temp value
+    setTempMarginValues(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(posId);
+      return newMap;
+    });
   };
 
   // Toggle margin editing
   const toggleMarginEdit = (posId: number) => {
-    setPositions(positions.map(pos => 
-      pos.id === posId ? { ...pos, editingMargin: !pos.editingMargin } : pos
+    const pos = positions.find(p => p.id === posId);
+    if (!pos) return;
+    
+    if (!pos.editingMargin) {
+      // Start editing - set temp value
+      setTempMarginValues(prev => new Map(prev).set(posId, pos.initialMargin.toFixed(2)));
+    } else {
+      // Cancel editing - clear temp value
+      setTempMarginValues(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(posId);
+        return newMap;
+      });
+    }
+    
+    setPositions(positions.map(p => 
+      p.id === posId ? { ...p, editingMargin: !p.editingMargin } : p
     ));
+  };
+  
+  // Update temp margin value
+  const updateTempMargin = (posId: number, value: string) => {
+    setTempMarginValues(prev => new Map(prev).set(posId, value));
   };
 
   // Tính phân bổ vốn
@@ -400,6 +716,113 @@ const FuturesTradingTool = () => {
     setEditingWallet(false);
   };
 
+  // Clear all data
+  const clearAllData = () => {
+    if (confirm('⚠️ Delete all positions and reset wallet? This cannot be undone!')) {
+      setPositions([]);
+      setWallet(906.3);
+      setTradingFee(0.05);
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('futures-positions');
+        localStorage.removeItem('futures-wallet');
+        localStorage.removeItem('futures-fee');
+        localStorage.removeItem('futures-timestamp');
+      }
+      // Also clear from Firebase
+      saveToFirestore({
+        wallet: 906.3,
+        tradingFee: 0.05,
+        positions: [],
+        lastUpdated: Date.now(),
+      });
+    }
+  };
+
+  // Manual sync
+  const manualSync = async () => {
+    setSyncStatus('syncing');
+    try {
+      const data: TradingData = {
+        wallet,
+        tradingFee,
+        positions: positions.map(pos => ({
+          ...pos,
+          autoUpdate: false,
+          editingMargin: false,
+        })),
+        lastUpdated: Date.now(),
+      };
+
+      const success = await saveToFirestore(data);
+      
+      if (success) {
+        setLastSyncTime(data.lastUpdated);
+        localStorage.setItem('futures-timestamp', data.lastUpdated.toString());
+        setSyncStatus('synced');
+      } else {
+        setSyncStatus('error');
+      }
+    } catch (error) {
+      console.error('Manual sync error:', error);
+      setSyncStatus('error');
+    }
+  };
+
+  // Export data as JSON
+  const exportData = () => {
+    const data = {
+      wallet,
+      tradingFee,
+      positions: positions.map(pos => ({
+        ...pos,
+        autoUpdate: false, // Don't export autoUpdate state
+        editingMargin: false,
+      })),
+      exportDate: new Date().toISOString(),
+    };
+    
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `futures-positions-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Import data from JSON
+  const importData = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = JSON.parse(e.target?.result as string);
+        if (data.positions) {
+          setPositions(data.positions.map((pos: Position) => ({
+            ...pos,
+            autoUpdate: false,
+            editingMargin: false,
+            // Ensure all required fields exist
+            currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
+            totalFees: pos.totalFees || 0,
+            remainingPercent: pos.remainingPercent || 100,
+          })));
+        }
+        if (data.wallet) setWallet(data.wallet);
+        if (data.tradingFee) setTradingFee(data.tradingFee);
+        alert('✅ Data imported successfully!');
+      } catch (error) {
+        alert('❌ Error importing data. Please check the file format.');
+        console.error('Import error:', error);
+      }
+    };
+    reader.readAsText(file);
+    // Reset input
+    event.target.value = '';
+  };
+
   // Margin level color
   const getMarginColor = (level: number) => {
     if (level >= 200) return 'text-green-400';
@@ -419,13 +842,111 @@ const FuturesTradingTool = () => {
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100 p-4">
+      {/* Auth Modal */}
+      {showAuthModal && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full border border-gray-700">
+            <h2 className="text-2xl font-bold mb-4 text-center bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
+              {authMode === 'login' ? '🔐 Login' : '📝 Sign Up'}
+            </h2>
+            
+            <p className="text-sm text-gray-400 mb-4 text-center">
+              {authMode === 'login' 
+                ? 'Login to sync your positions across all devices' 
+                : 'Create an account to sync your data everywhere'}
+            </p>
+
+            <form onSubmit={handleAuth} className="space-y-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={authForm.email}
+                  onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+                  placeholder="your@email.com"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Password</label>
+                <input
+                  type="password"
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
+                  className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 focus:outline-none focus:border-blue-500"
+                  placeholder="••••••••"
+                  required
+                  minLength={6}
+                />
+                <p className="text-xs text-gray-500 mt-1">Minimum 6 characters</p>
+              </div>
+
+              {authError && (
+                <div className="bg-red-900/30 border border-red-600/50 rounded p-3 text-sm text-red-400">
+                  {authError}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded px-4 py-2 font-semibold transition-colors"
+              >
+                {authLoading ? 'Loading...' : authMode === 'login' ? 'Login' : 'Sign Up'}
+              </button>
+            </form>
+
+            <div className="mt-4 text-center">
+              <button
+                onClick={() => {
+                  setAuthMode(authMode === 'login' ? 'signup' : 'login');
+                  setAuthError('');
+                }}
+                className="text-sm text-blue-400 hover:text-blue-300 underline"
+              >
+                {authMode === 'login' 
+                  ? "Don't have an account? Sign up" 
+                  : "Already have an account? Login"}
+              </button>
+            </div>
+
+            <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-600/30 rounded text-xs text-gray-300">
+              <strong>💡 Tip:</strong> Use the same email/password on all your devices to sync data everywhere!
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto space-y-6">
         
         {/* Header */}
         <div className="text-center space-y-2 py-4">
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">
-            Futures Trading Manager
-          </h1>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex-1"></div>
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent flex-1">
+              Futures Trading Manager
+            </h1>
+            <div className="flex-1 flex justify-end">
+              {user && (
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded px-3 py-1">
+                    <User size={14} className="text-blue-400" />
+                    <span className="text-xs text-gray-400">{user.email || 'Anonymous'}</span>
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    className="flex items-center gap-1 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded px-3 py-1 text-xs text-red-400"
+                    title="Logout"
+                  >
+                    <LogOut size={14} />
+                    Logout
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
           <p className="text-gray-400">10X Leverage • 45/40/15 Strategy</p>
           
           {/* Wallet Balance Editor */}
@@ -492,6 +1013,69 @@ const FuturesTradingTool = () => {
                 <span className="text-sm text-gray-400">%</span>
               </div>
             )}
+          </div>
+
+          {/* Data Management */}
+          <div className="flex items-center justify-center gap-3 mt-3">
+            <button
+              onClick={exportData}
+              className="text-xs text-blue-400 hover:text-blue-300 underline"
+              title="Export all data as JSON"
+            >
+              📥 Export Data
+            </button>
+            
+            <label className="text-xs text-green-400 hover:text-green-300 underline cursor-pointer">
+              📤 Import Data
+              <input
+                type="file"
+                accept=".json"
+                onChange={importData}
+                className="hidden"
+              />
+            </label>
+            
+            <button
+              onClick={clearAllData}
+              className="text-xs text-red-400 hover:text-red-300 underline"
+              title="Clear all positions and reset"
+            >
+              🗑️ Clear All
+            </button>
+            
+            <div className="h-4 w-px bg-gray-600"></div>
+            
+            {/* Firebase Sync Status */}
+            <button
+              onClick={manualSync}
+              disabled={syncStatus === 'syncing'}
+              className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded transition-colors ${
+                syncStatus === 'synced' ? 'text-green-400 hover:text-green-300' :
+                syncStatus === 'syncing' ? 'text-blue-400 cursor-wait' :
+                syncStatus === 'error' ? 'text-red-400 hover:text-red-300' :
+                'text-gray-400 hover:text-gray-300'
+              }`}
+              title={
+                syncStatus === 'synced' ? `Last synced: ${new Date(lastSyncTime).toLocaleTimeString()}` :
+                syncStatus === 'syncing' ? 'Syncing to cloud...' :
+                syncStatus === 'error' ? 'Sync error - click to retry' :
+                'Cloud sync offline'
+              }
+            >
+              {syncStatus === 'syncing' ? (
+                <RefreshCw size={12} className="animate-spin" />
+              ) : syncStatus === 'synced' ? (
+                <Cloud size={12} />
+              ) : (
+                <CloudOff size={12} />
+              )}
+              <span>
+                {syncStatus === 'synced' ? 'Synced' :
+                 syncStatus === 'syncing' ? 'Syncing...' :
+                 syncStatus === 'error' ? 'Sync Error' :
+                 'Offline'}
+              </span>
+            </button>
           </div>
         </div>
 
@@ -596,9 +1180,15 @@ const FuturesTradingTool = () => {
           {formData.entryPrice && (() => {
             const preview = calculateLevels(formData.entryPrice, formData.direction);
             if (!preview) return null;
+            
+            const baseMargin = allocation.perTradeInitial;
+            const positionValue = baseMargin * 10;
+            const openFee = calculateFee(positionValue);
+            const actualMargin = baseMargin - openFee;
+            
             return (
               <div className="mt-4 p-4 bg-gray-700/50 rounded border border-gray-600">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
                   <div>
                     <div className="text-gray-400">Stop Loss</div>
                     <div className="font-mono text-red-400">{preview.sl.toFixed(6)}</div>
@@ -613,7 +1203,12 @@ const FuturesTradingTool = () => {
                   </div>
                   <div>
                     <div className="text-gray-400">Position Size</div>
-                    <div className="font-mono">${(allocation.perTradeInitial * 10).toFixed(2)}</div>
+                    <div className="font-mono">${(actualMargin * 10).toFixed(2)}</div>
+                  </div>
+                  <div>
+                    <div className="text-gray-400">Margin / Fee</div>
+                    <div className="font-mono text-blue-400">${actualMargin.toFixed(2)}</div>
+                    <div className="font-mono text-orange-400 text-xs">-${openFee.toFixed(2)}</div>
                   </div>
                 </div>
               </div>
@@ -742,19 +1337,37 @@ const FuturesTradingTool = () => {
                               <input
                                 type="number"
                                 step="0.01"
-                                defaultValue={pos.initialMargin.toFixed(2)}
+                                value={tempMarginValues.get(pos.id) || pos.initialMargin.toFixed(2)}
+                                onChange={(e) => updateTempMargin(pos.id, e.target.value)}
                                 onKeyDown={(e) => {
                                   if (e.key === 'Enter') {
-                                    const input = e.target as HTMLInputElement;
-                                    updateMargin(pos.id, parseFloat(input.value) || pos.initialMargin);
+                                    const value = tempMarginValues.get(pos.id);
+                                    if (value) {
+                                      updateMargin(pos.id, parseFloat(value) || pos.initialMargin);
+                                    }
+                                  } else if (e.key === 'Escape') {
+                                    toggleMarginEdit(pos.id);
                                   }
                                 }}
                                 className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-14 text-xs"
                                 autoFocus
                               />
                               <button
+                                onClick={() => {
+                                  const value = tempMarginValues.get(pos.id);
+                                  if (value) {
+                                    updateMargin(pos.id, parseFloat(value) || pos.initialMargin);
+                                  } else {
+                                    toggleMarginEdit(pos.id);
+                                  }
+                                }}
+                                className="text-green-400 hover:text-green-300 text-xs"
+                              >
+                                ✓
+                              </button>
+                              <button
                                 onClick={() => toggleMarginEdit(pos.id)}
-                                className="text-gray-400 hover:text-gray-200"
+                                className="text-gray-400 hover:text-gray-200 text-xs"
                               >
                                 ✕
                               </button>
@@ -972,19 +1585,38 @@ const FuturesTradingTool = () => {
                       {/* Margin Editor */}
                       {pos.editingMargin ? (
                         <div className="flex items-center gap-1 mt-1">
+                          <span className="text-gray-400 text-xs">$</span>
                           <input
                             type="number"
                             step="0.01"
-                            defaultValue={pos.initialMargin.toFixed(2)}
+                            value={tempMarginValues.get(pos.id) || pos.initialMargin.toFixed(2)}
+                            onChange={(e) => updateTempMargin(pos.id, e.target.value)}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
-                                const input = e.target as HTMLInputElement;
-                                updateMargin(pos.id, parseFloat(input.value) || pos.initialMargin);
+                                const value = tempMarginValues.get(pos.id);
+                                if (value) {
+                                  updateMargin(pos.id, parseFloat(value) || pos.initialMargin);
+                                }
+                              } else if (e.key === 'Escape') {
+                                toggleMarginEdit(pos.id);
                               }
                             }}
                             className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-16 text-xs focus:outline-none"
                             autoFocus
                           />
+                          <button
+                            onClick={() => {
+                              const value = tempMarginValues.get(pos.id);
+                              if (value) {
+                                updateMargin(pos.id, parseFloat(value) || pos.initialMargin);
+                              } else {
+                                toggleMarginEdit(pos.id);
+                              }
+                            }}
+                            className="text-xs text-green-400 hover:text-green-300"
+                          >
+                            ✓
+                          </button>
                           <button
                             onClick={() => toggleMarginEdit(pos.id)}
                             className="text-xs text-gray-400 hover:text-gray-200"
@@ -1127,7 +1759,47 @@ const FuturesTradingTool = () => {
             </div>
             <div className="text-xs text-gray-300">
               Click the <Wifi size={12} className="inline" /> icon to enable/disable real-time price updates from Binance Futures. 
-              Symbol format: BTCUSDT, ETHUSDT, etc.
+              Symbol format: BTC, ETH, SOL (auto adds USDT).
+            </div>
+          </div>
+          
+          <div className="mt-3 p-3 bg-orange-900/20 border border-orange-600/30 rounded">
+            <div className="flex items-center gap-2 text-orange-400 font-semibold mb-1">
+              <span>💰 Trading Fees & Margin</span>
+            </div>
+            <div className="text-xs text-gray-300 space-y-1">
+              <div>• Fee ({tradingFee}%) auto-deducted when opening positions and DCA</div>
+              <div>• Click <span className="text-blue-400">✎</span> next to margin → type new value → press <kbd className="px-1 py-0.5 bg-gray-700 rounded">Enter</kbd> or click <span className="text-green-400">✓</span></div>
+              <div>• Press <kbd className="px-1 py-0.5 bg-gray-700 rounded">Esc</kbd> or click <span className="text-gray-400">✕</span> to cancel editing</div>
+              <div>• Total fees tracked and displayed for each position</div>
+            </div>
+          </div>
+          
+          <div className="mt-3 p-3 bg-purple-900/20 border border-purple-600/30 rounded">
+            <div className="flex items-center gap-2 text-purple-400 font-semibold mb-1">
+              <Cloud size={16} />
+              <span>Multi-Device Cloud Sync</span>
+            </div>
+            <div className="text-xs text-gray-300 space-y-1">
+              <div>• <strong>Email/Password Auth:</strong> Login with same account on all devices</div>
+              <div>• <strong>Real-time sync:</strong> Changes appear instantly on all logged-in devices</div>
+              <div>• <strong>Auto-sync:</strong> Saves to cloud every 2 seconds automatically</div>
+              <div>• <strong>Offline-first:</strong> Works without internet, syncs when back online</div>
+              <div>• <strong>Data safety:</strong> Your data is encrypted and stored securely in Firebase</div>
+              <div>• <strong>How to sync:</strong> Just login with same email/password on any device!</div>
+            </div>
+          </div>
+          
+          <div className="mt-3 p-3 bg-orange-900/20 border border-orange-600/30 rounded">
+            <div className="flex items-center gap-2 text-orange-400 font-semibold mb-1">
+              <DollarSign size={16} />
+              <span>Trading Fees & Margin Adjustment</span>
+            </div>
+            <div className="text-xs text-gray-300 space-y-1">
+              <div>• Trading fee is <strong>auto-deducted</strong> from margin when opening positions and DCA</div>
+              <div>• Default: <strong>{tradingFee}%</strong> (Binance Futures taker fee) - click "Trading Fee" in header to adjust</div>
+              <div>• Click the <span className="text-blue-400">✎ edit icon</span> next to margin to manually adjust if needed</div>
+              <div>• Total fees paid are tracked and displayed for each position</div>
             </div>
           </div>
         </div>
