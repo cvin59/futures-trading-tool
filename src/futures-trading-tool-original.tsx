@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Wifi, WifiOff, Cloud, CloudOff, RefreshCw, DollarSign, LogOut, User, ChevronUp, ChevronDown } from 'lucide-react';
+import { Wifi, WifiOff, Cloud, CloudOff, RefreshCw, DollarSign, LogOut, User } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { saveToFirestore, loadFromFirestore, subscribeToFirestore, type TradingData, signIn, signUp, signOut, auth } from './lib/firebase';
 
@@ -11,7 +11,6 @@ interface Position {
   entry: number;
   currentPrice: number;
   avgEntry: number;
-  expectedPrice: number;
   sl: number;
   dca1: number;
   dca2: number;
@@ -71,10 +70,9 @@ const FuturesTradingTool = () => {
           const parsed = JSON.parse(saved);
           return parsed.map((pos: Position) => ({
             ...pos,
-            autoUpdate: true,
+            autoUpdate: false,
             editingMargin: false,
             currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
-            expectedPrice: pos.expectedPrice || pos.tp1 || pos.avgEntry,
           }));
         } catch (e) {
           console.error('Error loading positions:', e);
@@ -84,8 +82,7 @@ const FuturesTradingTool = () => {
     return [];
   });
   
-  const [viewMode, setViewMode] = useState<'cards' | 'table'>('table');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
+  const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
   const [formData, setFormData] = useState<FormData>({
     symbol: '',
     direction: 'LONG',
@@ -195,10 +192,9 @@ const FuturesTradingTool = () => {
           if (data.lastUpdated > localTimestamp) {
             setPositions(data.positions.map((pos: Position) => ({
               ...pos,
-              autoUpdate: true,
+              autoUpdate: false,
               editingMargin: false,
               currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
-              expectedPrice: pos.expectedPrice || pos.tp1 || pos.avgEntry,
             })));
             setWallet(data.wallet);
             setTradingFee(data.tradingFee);
@@ -213,11 +209,6 @@ const FuturesTradingTool = () => {
     };
 
     loadFirebaseData();
-  }, []); // Empty dependency array - only load once on mount
-
-  // Firebase real-time subscription
-  useEffect(() => {
-    if (!user) return;
 
     const unsubscribe = subscribeToFirestore((data) => {
       if (data && !isSyncingRef.current) {
@@ -225,10 +216,9 @@ const FuturesTradingTool = () => {
         if (data.lastUpdated > localTimestamp) {
           setPositions(data.positions.map((pos: Position) => ({
             ...pos,
-            autoUpdate: true,
+            autoUpdate: false,
             editingMargin: false,
             currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
-            expectedPrice: pos.expectedPrice || pos.tp1 || pos.avgEntry,
           })));
           setWallet(data.wallet);
           setTradingFee(data.tradingFee);
@@ -241,8 +231,11 @@ const FuturesTradingTool = () => {
 
     return () => {
       unsubscribe();
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+      }
     };
-  }, [user]); // Only depend on user changes
+  }, []);
 
   // Save to Firebase (debounced)
   useEffect(() => {
@@ -457,79 +450,6 @@ const FuturesTradingTool = () => {
     };
   }, [positions, wallet, allocation]);
 
-  const sortedPositions = useMemo(() => {
-    if (!sortOrder) return positions;
-    
-    return [...positions].sort((a, b) => {
-      const comparison = a.symbol.localeCompare(b.symbol);
-      return sortOrder === 'asc' ? comparison : -comparison;
-    });
-  }, [positions, sortOrder]);
-
-  const handleSymbolSort = () => {
-    if (sortOrder === null) {
-      setSortOrder('asc');
-    } else if (sortOrder === 'asc') {
-      setSortOrder('desc');
-    } else {
-      setSortOrder(null);
-    }
-  };
-
-  const getPriceProximity = (pos: Position) => {
-    const current = pos.currentPrice;
-    const tolerance = pos.avgEntry * 0.005; // 0.5% tolerance for "near"
-    
-    // Check if at exact levels first (within tolerance)
-    if (Math.abs(current - pos.tp1) <= tolerance) return { status: 'At TP1', color: 'text-green-400' };
-    if (Math.abs(current - pos.tp2) <= tolerance) return { status: 'At TP2', color: 'text-green-400' };
-    if (Math.abs(current - pos.tp3) <= tolerance) return { status: 'At TP3', color: 'text-green-400' };
-    if (Math.abs(current - pos.dca1) <= tolerance) return { status: 'At DCA1', color: 'text-yellow-400' };
-    if (Math.abs(current - pos.dca2) <= tolerance) return { status: 'At DCA2', color: 'text-yellow-400' };
-    if (Math.abs(current - pos.sl) <= tolerance) return { status: 'At SL', color: 'text-red-400' };
-    
-    // Check if near levels (within 2% for "near")
-    const nearTolerance = pos.avgEntry * 0.02; // 2% tolerance for "near"
-    
-    if (pos.direction === 'LONG') {
-      // For LONG: TP levels are above entry, DCA/SL below
-      if (current > pos.avgEntry) {
-        // Above entry - check TP levels
-        if (Math.abs(current - pos.tp3) <= nearTolerance && current < pos.tp3) return { status: 'Near TP3', color: 'text-green-300' };
-        if (Math.abs(current - pos.tp2) <= nearTolerance && current < pos.tp2) return { status: 'Near TP2', color: 'text-green-300' };
-        if (Math.abs(current - pos.tp1) <= nearTolerance && current < pos.tp1) return { status: 'Near TP1', color: 'text-green-300' };
-        if (current > pos.tp3) return { status: 'Above TP3', color: 'text-green-500' };
-        if (current > pos.tp2) return { status: 'Above TP2', color: 'text-green-400' };
-        if (current > pos.tp1) return { status: 'Above TP1', color: 'text-green-400' };
-      } else {
-        // Below entry - check DCA/SL levels
-        if (Math.abs(current - pos.dca1) <= nearTolerance && current > pos.dca1) return { status: 'Near DCA1', color: 'text-yellow-300' };
-        if (Math.abs(current - pos.dca2) <= nearTolerance && current > pos.dca2) return { status: 'Near DCA2', color: 'text-yellow-300' };
-        if (Math.abs(current - pos.sl) <= nearTolerance && current > pos.sl) return { status: 'Near SL', color: 'text-red-300' };
-        if (current < pos.sl) return { status: 'Below SL', color: 'text-red-500' };
-      }
-    } else {
-      // For SHORT: TP levels are below entry, DCA/SL above
-      if (current < pos.avgEntry) {
-        // Below entry - check TP levels
-        if (Math.abs(current - pos.tp3) <= nearTolerance && current > pos.tp3) return { status: 'Near TP3', color: 'text-green-300' };
-        if (Math.abs(current - pos.tp2) <= nearTolerance && current > pos.tp2) return { status: 'Near TP2', color: 'text-green-300' };
-        if (Math.abs(current - pos.tp1) <= nearTolerance && current > pos.tp1) return { status: 'Near TP1', color: 'text-green-300' };
-        if (current < pos.tp3) return { status: 'Below TP3', color: 'text-green-500' };
-        if (current < pos.tp2) return { status: 'Below TP2', color: 'text-green-400' };
-        if (current < pos.tp1) return { status: 'Below TP1', color: 'text-green-400' };
-      } else {
-        // Above entry - check DCA/SL levels
-        if (Math.abs(current - pos.dca1) <= nearTolerance && current < pos.dca1) return { status: 'Near DCA1', color: 'text-yellow-300' };
-        if (Math.abs(current - pos.dca2) <= nearTolerance && current < pos.dca2) return { status: 'Near DCA2', color: 'text-yellow-300' };
-        if (Math.abs(current - pos.sl) <= nearTolerance && current < pos.sl) return { status: 'Near SL', color: 'text-red-300' };
-        if (current > pos.sl) return { status: 'Above SL', color: 'text-red-500' };
-      }
-    }
-    
-    return { status: 'In Range', color: 'text-gray-400' };
-  };
-
   const calculateLevels = (entry: string, direction: 'LONG' | 'SHORT') => {
     const entryNum = parseFloat(entry);
     if (!entryNum || isNaN(entryNum)) return null;
@@ -563,7 +483,6 @@ const FuturesTradingTool = () => {
       ...levels,
       currentPrice: levels.entry,
       avgEntry: levels.entry,
-      expectedPrice: levels.tp1,
       initialMargin: actualMargin,
       positionSize: actualMargin * 10,
       dca1Executed: false,
@@ -636,20 +555,6 @@ const FuturesTradingTool = () => {
         [`tp${tpLevel}Closed`]: true,
       };
     }));
-  };
-
-  const calculateExpectedPnL = (pos: Position): number => {
-    const priceChange = pos.direction === 'LONG'
-      ? (pos.expectedPrice - pos.avgEntry) / pos.avgEntry
-      : (pos.avgEntry - pos.expectedPrice) / pos.avgEntry;
-    
-    return pos.positionSize * priceChange * (pos.remainingPercent / 100);
-  };
-
-  const updateExpectedPrice = (posId: number, newExpectedPrice: number) => {
-    setPositions(positions.map(pos => 
-      pos.id === posId ? { ...pos, expectedPrice: newExpectedPrice } : pos
-    ));
   };
 
   const updatePrice = (posId: number, newPrice: number) => {
@@ -849,7 +754,7 @@ const FuturesTradingTool = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100">
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-2 sm:p-4">
       {/* Auth Modal */}
       {showAuthModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
@@ -927,7 +832,7 @@ const FuturesTradingTool = () => {
         </div>
       )}
 
-      <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6 px-4 lg:px-6 xl:px-8 py-4 lg:py-6">
+      <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
         
         {/* Header */}
         <div className="text-center space-y-2 py-4">
@@ -1084,41 +989,11 @@ const FuturesTradingTool = () => {
                  'Offline'}
               </span>
             </button>
-            
-            {/* Global WiFi Toggle */}
-            <button
-              onClick={() => {
-                const allAutoUpdate = positions.every(pos => pos.autoUpdate);
-                setPositions(positions.map(pos => ({ 
-                  ...pos, 
-                  autoUpdate: !allAutoUpdate 
-                })));
-              }}
-              className={`flex items-center gap-1.5 px-2 py-1 rounded transition-colors ${
-                positions.every(pos => pos.autoUpdate)
-                  ? 'text-green-400 hover:text-green-300 bg-green-900/20' 
-                  : 'text-gray-400 hover:text-gray-300 bg-gray-800'
-              }`}
-              title={
-                positions.every(pos => pos.autoUpdate)
-                  ? 'Turn OFF all WiFi auto-updates'
-                  : 'Turn ON all WiFi auto-updates'
-              }
-            >
-              {positions.every(pos => pos.autoUpdate) ? (
-                <Wifi size={12} />
-              ) : (
-                <WifiOff size={12} />
-              )}
-              <span className="text-xs">
-                {positions.every(pos => pos.autoUpdate) ? 'All WiFi ON' : 'All WiFi OFF'}
-              </span>
-            </button>
           </div>
         </div>
 
         {/* Dashboard Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-3 md:gap-4 lg:gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
             <div className="text-gray-400 text-sm mb-1">Total Equity</div>
             <div className="text-2xl font-bold">${stats.equity.toFixed(2)}</div>
@@ -1156,7 +1031,7 @@ const FuturesTradingTool = () => {
         {/* Fund Allocation */}
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <h3 className="text-lg font-semibold mb-3">Fund Allocation (45/40/15)</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-3 gap-3 md:gap-4 lg:gap-6 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4 text-sm">
             <div>
               <div className="text-gray-400">Initial Fund (45%)</div>
               <div className="font-bold text-blue-400">${allocation.initial.toFixed(2)}</div>
@@ -1178,7 +1053,7 @@ const FuturesTradingTool = () => {
         {/* Add Position Form */}
         <div className="bg-gray-800 rounded-lg p-4 md:p-6 border border-gray-700">
           <h3 className="text-lg font-semibold mb-4">Open New Position</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3 md:gap-4 lg:gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
             <input
               type="text"
               placeholder="Symbol (e.g. XPL)"
@@ -1226,7 +1101,7 @@ const FuturesTradingTool = () => {
             
             return (
               <div className="mt-4 p-3 md:p-4 bg-gray-700/50 rounded border border-gray-600">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 xl:grid-cols-5 gap-3 md:gap-4 lg:gap-6 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 md:gap-4 text-sm">
                   <div>
                     <div className="text-gray-400">Stop Loss</div>
                     <div className="font-mono text-red-400">{preview.sl.toFixed(6)}</div>
@@ -1295,16 +1170,7 @@ const FuturesTradingTool = () => {
                 <table className="w-full text-sm min-w-[1200px]">
                   <thead className="bg-gray-900/50 border-b border-gray-700 sticky top-0">
                     <tr className="text-left">
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">
-                        <button
-                          onClick={handleSymbolSort}
-                          className="flex items-center gap-1 hover:text-blue-400 transition-colors"
-                        >
-                          Symbol
-                          {sortOrder === 'asc' && <ChevronUp size={14} />}
-                          {sortOrder === 'desc' && <ChevronDown size={14} />}
-                        </button>
-                      </th>
+                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Symbol</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Type</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Entry/Avg</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Current</th>
@@ -1313,15 +1179,13 @@ const FuturesTradingTool = () => {
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Position</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">P&L</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">ROI</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Price Status</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Expected</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">DCA</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">TP Status</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap sticky right-0 bg-gray-900/50 min-w-[120px]">Actions</th>
+                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap sticky right-0 bg-gray-900/50">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedPositions.map(pos => {
+                    {positions.map(pos => {
                       const priceChangePercent = pos.direction === 'LONG'
                         ? ((pos.currentPrice - pos.avgEntry) / pos.avgEntry * 100)
                         : ((pos.avgEntry - pos.currentPrice) / pos.avgEntry * 100);
@@ -1448,33 +1312,6 @@ const FuturesTradingTool = () => {
                             </div>
                           </td>
                           <td className="p-2 md:p-3 text-xs whitespace-nowrap">
-                            {(() => {
-                              const proximity = getPriceProximity(pos);
-                              return (
-                                <div className={`font-semibold ${proximity.color}`}>
-                                  {proximity.status}
-                                </div>
-                              );
-                            })()}
-                          </td>
-                          <td className="p-2 md:p-3 text-xs whitespace-nowrap">
-                            <input
-                              type="number"
-                              step="any"
-                              value={pos.expectedPrice}
-                              onChange={(e) => updateExpectedPrice(pos.id, parseFloat(e.target.value) || 0)}
-                              className="bg-gray-700 border border-gray-600 rounded px-2 py-1 font-mono text-xs w-20 focus:outline-none focus:border-blue-500"
-                            />
-                            {(() => {
-                              const expectedPnL = calculateExpectedPnL(pos);
-                              return (
-                                <div className={`mt-1 font-semibold ${expectedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                  {expectedPnL >= 0 ? '+' : ''}${expectedPnL.toFixed(2)}
-                                </div>
-                              );
-                            })()}
-                          </td>
-                          <td className="p-2 md:p-3 text-xs whitespace-nowrap">
                             <div className={pos.dca1Executed ? 'text-yellow-400' : 'text-gray-500'}>
                               {pos.dca1Executed ? '✓ DCA1' : '○ DCA1'}
                             </div>
@@ -1493,26 +1330,24 @@ const FuturesTradingTool = () => {
                               {pos.tp3Closed ? '✓ TP3' : '○ TP3'}
                             </div>
                           </td>
-                          <td className="p-2 md:p-3 whitespace-nowrap sticky right-0 bg-gray-800 min-w-[120px]">
-                            <div className="flex flex-col gap-1">
-                              <button
-                                onClick={() => {
-                                  setViewMode('cards');
-                                  setTimeout(() => {
-                                    document.getElementById(`pos-${pos.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                  }, 100);
-                                }}
-                                className="bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-xs font-medium w-full"
-                              >
-                                Edit
-                              </button>
-                              <button
-                                onClick={() => closePosition(pos.id)}
-                                className="bg-red-600 hover:bg-red-700 px-3 py-1 rounded text-xs font-medium w-full"
-                              >
-                                Close
-                              </button>
-                            </div>
+                          <td className="p-2 md:p-3 whitespace-nowrap sticky right-0 bg-gray-800">
+                            <button
+                              onClick={() => {
+                                setViewMode('cards');
+                                setTimeout(() => {
+                                  document.getElementById(`pos-${pos.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                }, 100);
+                              }}
+                              className="bg-blue-600 hover:bg-blue-700 px-2 py-1 rounded text-xs mb-1 w-full"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => closePosition(pos.id)}
+                              className="bg-red-600 hover:bg-red-700 px-2 py-1 rounded text-xs w-full"
+                            >
+                              Close
+                            </button>
                           </td>
                         </tr>
                       );
@@ -1526,7 +1361,7 @@ const FuturesTradingTool = () => {
             </div>
           ) : (
             /* CARDS VIEW */
-            sortedPositions.map(pos => (
+            positions.map(pos => (
               <div key={pos.id} id={`pos-${pos.id}`} className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
                 {/* Position Header */}
                 <div className={`p-4 ${pos.direction === 'LONG' ? 'bg-green-900/20' : 'bg-red-900/20'} border-b border-gray-700`}>
@@ -1589,28 +1424,6 @@ const FuturesTradingTool = () => {
                     </button>
                   </div>
 
-                  {/* Expected Price Input */}
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm text-gray-400 w-32">Expected Price:</label>
-                    <input
-                      type="number"
-                      step="any"
-                      value={pos.expectedPrice}
-                      onChange={(e) => updateExpectedPrice(pos.id, parseFloat(e.target.value) || 0)}
-                      className="bg-gray-700 border border-blue-600/50 rounded px-3 py-1 font-mono flex-1 focus:outline-none focus:border-blue-500"
-                    />
-                    <div className="text-sm w-24">
-                      {(() => {
-                        const expectedPnL = calculateExpectedPnL(pos);
-                        return (
-                          <div className={`font-semibold ${expectedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {expectedPnL >= 0 ? '+' : ''}${expectedPnL.toFixed(2)}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
                   {/* Stop Loss Input */}
                   <div className="space-y-2">
                     <div className="flex items-center gap-2">
@@ -1653,7 +1466,7 @@ const FuturesTradingTool = () => {
                   </div>
 
                   {/* Levels Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4 gap-3 lg:gap-4 text-sm">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
                     <div className="bg-red-900/20 p-2 rounded border border-red-600/30">
                       <div className="text-gray-400 text-xs">Stop Loss (Editable)</div>
                       <div className="font-mono text-red-400">{pos.sl.toFixed(6)}</div>
@@ -1747,12 +1560,12 @@ const FuturesTradingTool = () => {
                   </div>
 
                   {/* Action Buttons */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 xl:grid-cols-7 gap-2 lg:gap-3">
+                  <div className="flex flex-wrap gap-2">
                     {/* DCA Buttons */}
                     <button
                       onClick={() => executeDCA(pos.id, 1)}
                       disabled={pos.dca1Executed}
-                      className={`px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold ${
+                      className={`px-3 py-1.5 rounded text-xs sm:text-sm font-semibold flex-grow sm:flex-grow-0 ${
                         pos.dca1Executed 
                           ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
                           : 'bg-yellow-600 hover:bg-yellow-700'
@@ -1764,7 +1577,7 @@ const FuturesTradingTool = () => {
                     <button
                       onClick={() => executeDCA(pos.id, 2)}
                       disabled={pos.dca2Executed}
-                      className={`px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold ${
+                      className={`px-3 py-1.5 rounded text-xs sm:text-sm font-semibold flex-grow sm:flex-grow-0 ${
                         pos.dca2Executed 
                           ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
                           : 'bg-yellow-600 hover:bg-yellow-700'
@@ -1777,7 +1590,7 @@ const FuturesTradingTool = () => {
                     <button
                       onClick={() => closeTP(pos.id, 1)}
                       disabled={pos.tp1Closed}
-                      className={`px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold ${
+                      className={`px-3 py-1.5 rounded text-xs sm:text-sm font-semibold flex-grow sm:flex-grow-0 ${
                         pos.tp1Closed 
                           ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
                           : 'bg-green-600 hover:bg-green-700'
@@ -1789,7 +1602,7 @@ const FuturesTradingTool = () => {
                     <button
                       onClick={() => closeTP(pos.id, 2)}
                       disabled={pos.tp2Closed}
-                      className={`px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold ${
+                      className={`px-3 py-1.5 rounded text-xs sm:text-sm font-semibold flex-grow sm:flex-grow-0 ${
                         pos.tp2Closed 
                           ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
                           : 'bg-green-600 hover:bg-green-700'
@@ -1801,7 +1614,7 @@ const FuturesTradingTool = () => {
                     <button
                       onClick={() => closeTP(pos.id, 3)}
                       disabled={pos.tp3Closed}
-                      className={`px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold ${
+                      className={`px-3 py-1.5 rounded text-xs sm:text-sm font-semibold flex-grow sm:flex-grow-0 ${
                         pos.tp3Closed 
                           ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
                           : 'bg-green-600 hover:bg-green-700'
@@ -1813,7 +1626,7 @@ const FuturesTradingTool = () => {
                     {/* Close Position */}
                     <button
                       onClick={() => closePosition(pos.id)}
-                      className="px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold bg-red-600 hover:bg-red-700 lg:col-span-1"
+                      className="px-3 py-1.5 rounded text-xs sm:text-sm font-semibold bg-red-600 hover:bg-red-700 w-full sm:w-auto sm:ml-auto"
                     >
                       Close Position
                     </button>
@@ -1827,7 +1640,7 @@ const FuturesTradingTool = () => {
         {/* Quick Reference */}
         <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
           <h3 className="text-lg font-semibold mb-3">Quick Reference</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4 lg:gap-6 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
             <div>
               <div className="font-semibold text-blue-400 mb-2">LONG Setup</div>
               <div className="space-y-1 text-gray-300">
