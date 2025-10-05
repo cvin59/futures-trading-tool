@@ -21,6 +21,7 @@ interface Position {
   tp3: number;
   initialMargin: number;
   positionSize: number;
+  leverage: number;
   dca1Executed: boolean;
   dca2Executed: boolean;
   tp1Closed: boolean;
@@ -31,12 +32,15 @@ interface Position {
   autoUpdate: boolean;
   totalFees: number;
   editingMargin: boolean;
+  editingLeverage: boolean;
 }
 
 interface FormData {
   symbol: string;
   direction: 'LONG' | 'SHORT';
   entryPrice: string;
+  leverage: number;
+  initialMargin: string;
 }
 
 interface BinanceTickerData {
@@ -90,6 +94,8 @@ const FuturesTradingTool = () => {
     symbol: '',
     direction: 'LONG',
     entryPrice: '',
+    leverage: 10,
+    initialMargin: '',
   });
 
   const [tradingFee, setTradingFee] = useState<number>(() => {
@@ -102,6 +108,9 @@ const FuturesTradingTool = () => {
   
   const [showFeeSettings, setShowFeeSettings] = useState<boolean>(false);
   const [tempMarginValues, setTempMarginValues] = useState<Map<number, string>>(new Map());
+  const [tempLeverageValues, setTempLeverageValues] = useState<Map<number, string>>(new Map());
+  const [tempTPValues, setTempTPValues] = useState<Map<string, string>>(new Map()); // key: `${posId}-tp${level}`
+  const [tempDCAValues, setTempDCAValues] = useState<Map<string, string>>(new Map()); // key: `${posId}-dca${level}`
 
   // Firebase sync state
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('offline');
@@ -227,6 +236,7 @@ const FuturesTradingTool = () => {
             ...pos,
             autoUpdate: true,
             editingMargin: false,
+            editingLeverage: false,
             currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
             expectedPrice: pos.expectedPrice || pos.tp1 || pos.avgEntry,
           })));
@@ -425,6 +435,80 @@ const FuturesTradingTool = () => {
     setTempMarginValues(prev => new Map(prev).set(posId, value));
   };
 
+  const updateLeverage = (posId: number, newLeverage: number) => {
+    setPositions(positions.map(pos => {
+      if (pos.id !== posId) return pos;
+      return {
+        ...pos,
+        leverage: newLeverage,
+        positionSize: pos.initialMargin * newLeverage,
+        editingLeverage: false,
+      };
+    }));
+    setTempLeverageValues(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(posId);
+      return newMap;
+    });
+  };
+
+  const toggleEditingLeverage = (posId: number) => {
+    const pos = positions.find(p => p.id === posId);
+    if (!pos?.editingLeverage) {
+      setTempLeverageValues(prev => new Map(prev).set(posId, pos?.leverage?.toString() || '10'));
+    } else {
+      setTempLeverageValues(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(posId);
+        return newMap;
+      });
+    }
+    
+    setPositions(positions.map(p => 
+      p.id === posId ? { ...p, editingLeverage: !p.editingLeverage } : p
+    ));
+  };
+  
+  const updateTempLeverage = (posId: number, value: string) => {
+    setTempLeverageValues(prev => new Map(prev).set(posId, value));
+  };
+
+  // TP Helper Functions
+  const updateTempTP = (posId: number, tpLevel: 1 | 2 | 3, value: string) => {
+    setTempTPValues(prev => new Map(prev).set(`${posId}-tp${tpLevel}`, value));
+  };
+
+  const executeTpWithInput = (posId: number, tpLevel: 1 | 2 | 3) => {
+    const key = `${posId}-tp${tpLevel}`;
+    const value = tempTPValues.get(key);
+    if (value) {
+      closeTP(posId, tpLevel, parseFloat(value));
+      setTempTPValues(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(key);
+        return newMap;
+      });
+    }
+  };
+
+  // DCA Helper Functions
+  const updateTempDCA = (posId: number, dcaLevel: 1 | 2, value: string) => {
+    setTempDCAValues(prev => new Map(prev).set(`${posId}-dca${dcaLevel}`, value));
+  };
+
+  const executeDcaWithInput = (posId: number, dcaLevel: 1 | 2) => {
+    const key = `${posId}-dca${dcaLevel}`;
+    const value = tempDCAValues.get(key);
+    if (value) {
+      executeDCA(posId, dcaLevel, parseFloat(value));
+      setTempDCAValues(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(key);
+        return newMap;
+      });
+    }
+  };
+
   const allocation = useMemo(() => ({
     initial: wallet * 0.45,
     dca: wallet * 0.40,
@@ -551,8 +635,10 @@ const FuturesTradingTool = () => {
     const levels = calculateLevels(formData.entryPrice, formData.direction);
     if (!levels) return;
 
-    const baseMargin = allocation.perTradeInitial;
-    const positionValue = baseMargin * 10;
+    const customMargin = formData.initialMargin ? parseFloat(formData.initialMargin) : null;
+    const baseMargin = customMargin || allocation.perTradeInitial;
+    const leverage = formData.leverage || 10;
+    const positionValue = baseMargin * leverage;
     const openFee = calculateFee(positionValue);
     const actualMargin = baseMargin - openFee;
 
@@ -565,7 +651,8 @@ const FuturesTradingTool = () => {
       avgEntry: levels.entry,
       expectedPrice: levels.tp1,
       initialMargin: actualMargin,
-      positionSize: actualMargin * 10,
+      positionSize: actualMargin * leverage,
+      leverage,
       dca1Executed: false,
       dca2Executed: false,
       tp1Closed: false,
@@ -576,13 +663,14 @@ const FuturesTradingTool = () => {
       autoUpdate: true,
       totalFees: openFee,
       editingMargin: false,
+      editingLeverage: false,
     };
 
     setPositions([...positions, newPosition]);
-    setFormData({ symbol: '', direction: 'LONG', entryPrice: '' });
+    setFormData({ symbol: '', direction: 'LONG', entryPrice: '', leverage: 10, initialMargin: '' });
   };
 
-  const executeDCA = (posId: number, dcaLevel: 1 | 2) => {
+  const executeDCA = (posId: number, dcaLevel: 1 | 2, customMargin?: number) => {
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
@@ -590,12 +678,13 @@ const FuturesTradingTool = () => {
       if ((isFirst && pos.dca1Executed) || (!isFirst && pos.dca2Executed)) return pos;
 
       const dcaPrice = isFirst ? pos.dca1 : pos.dca2;
-      const baseDcaMargin = isFirst ? allocation.perTradeDCA1 : allocation.perTradeDCA2;
+      // Use custom margin if provided, otherwise use defaults
+      const baseDcaMargin = customMargin !== undefined ? customMargin : (isFirst ? allocation.perTradeDCA1 : allocation.perTradeDCA2);
       
-      const dcaPositionValue = baseDcaMargin * 10;
+      const dcaPositionValue = baseDcaMargin * pos.leverage;
       const dcaFee = calculateFee(dcaPositionValue);
       const actualDcaMargin = baseDcaMargin - dcaFee;
-      const dcaPosition = actualDcaMargin * 10;
+      const dcaPosition = actualDcaMargin * pos.leverage;
 
       const totalPosition = pos.positionSize + dcaPosition;
       const avgEntry = (pos.positionSize * pos.avgEntry + dcaPosition * dcaPrice) / totalPosition;
@@ -620,15 +709,19 @@ const FuturesTradingTool = () => {
     }));
   };
 
-  const closeTP = (posId: number, tpLevel: 1 | 2 | 3) => {
+  const closeTP = (posId: number, tpLevel: 1 | 2 | 3, customPercent?: number) => {
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
-      let closePercent = 40;
-      if (tpLevel === 2) closePercent = 30;
-      if (tpLevel === 3) closePercent = 30;
+      // Use custom percentage if provided, otherwise use defaults
+      let closePercent = customPercent;
+      if (closePercent === undefined) {
+        closePercent = 40;
+        if (tpLevel === 2) closePercent = 30;
+        if (tpLevel === 3) closePercent = 30;
+      }
 
-      const newRemaining = pos.remainingPercent - closePercent;
+      const newRemaining = Math.max(0, pos.remainingPercent - closePercent);
       
       return {
         ...pos,
@@ -815,6 +908,7 @@ const FuturesTradingTool = () => {
             ...pos,
             autoUpdate: false,
             editingMargin: false,
+            editingLeverage: false,
             currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
             totalFees: pos.totalFees || 0,
             remainingPercent: pos.remainingPercent || 100,
@@ -1205,6 +1299,26 @@ const FuturesTradingTool = () => {
               className="bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500 w-full"
             />
 
+            <input
+              type="number"
+              min="1"
+              max="100"
+              placeholder="Leverage (1-100x)"
+              value={formData.leverage}
+              onChange={(e) => setFormData({...formData, leverage: parseInt(e.target.value) || 10})}
+              className="bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500 w-full"
+            />
+
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              placeholder={`Initial Margin ($${allocation.perTradeInitial.toFixed(2)})`}
+              value={formData.initialMargin}
+              onChange={(e) => setFormData({...formData, initialMargin: e.target.value})}
+              className="bg-gray-700 border border-gray-600 rounded px-4 py-2 focus:outline-none focus:border-blue-500 w-full"
+            />
+
             <button
               onClick={addPosition}
               disabled={!formData.symbol || !formData.entryPrice}
@@ -1241,12 +1355,13 @@ const FuturesTradingTool = () => {
                   </div>
                   <div>
                     <div className="text-gray-400">Position Size</div>
-                    <div className="font-mono">${(actualMargin * 10).toFixed(2)}</div>
+                    <div className="font-mono">${(actualMargin * (formData.leverage || 10)).toFixed(2)}</div>
                   </div>
                   <div>
                     <div className="text-gray-400">Margin / Fee</div>
                     <div className="font-mono text-blue-400">${actualMargin.toFixed(2)}</div>
                     <div className="font-mono text-orange-400 text-xs">-${openFee.toFixed(2)}</div>
+                    {formData.initialMargin && <div className="text-xs text-purple-400">Custom</div>}
                   </div>
                 </div>
               </div>
@@ -1311,6 +1426,7 @@ const FuturesTradingTool = () => {
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Stop Loss</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">TP1/TP2/TP3</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Position</th>
+                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Leverage</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">P&L</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">ROI</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Price Status</th>
@@ -1437,6 +1553,64 @@ const FuturesTradingTool = () => {
                             <div className="text-purple-400">{pos.remainingPercent}%</div>
                             <div className="text-orange-400">Fee: ${pos.totalFees.toFixed(2)}</div>
                           </td>
+                          
+                          {/* Leverage Column */}
+                          <td className="p-2 md:p-3 whitespace-nowrap">
+                            {pos.editingLeverage ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="100"
+                                  value={tempLeverageValues.get(pos.id) || pos.leverage.toString()}
+                                  onChange={(e) => updateTempLeverage(pos.id, e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      const value = tempLeverageValues.get(pos.id);
+                                      if (value) {
+                                        updateLeverage(pos.id, parseInt(value) || pos.leverage);
+                                      }
+                                    } else if (e.key === 'Escape') {
+                                      toggleEditingLeverage(pos.id);
+                                    }
+                                  }}
+                                  className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-14 text-xs"
+                                  autoFocus
+                                />
+                                <span className="text-purple-400 text-xs">x</span>
+                                <button
+                                  onClick={() => {
+                                    const value = tempLeverageValues.get(pos.id);
+                                    if (value) {
+                                      updateLeverage(pos.id, parseInt(value) || pos.leverage);
+                                    } else {
+                                      toggleEditingLeverage(pos.id);
+                                    }
+                                  }}
+                                  className="text-green-400 hover:text-green-300 text-xs"
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  onClick={() => toggleEditingLeverage(pos.id)}
+                                  className="text-gray-400 hover:text-gray-200 text-xs"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1">
+                                <span className="font-mono text-purple-400 font-bold">{pos.leverage || 10}x</span>
+                                <button
+                                  onClick={() => toggleEditingLeverage(pos.id)}
+                                  className="text-blue-400 hover:text-blue-300 text-xs"
+                                >
+                                  ✎
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                          
                           <td className="p-2 md:p-3 whitespace-nowrap">
                             <div className={`font-bold ${pos.unrealizedPNL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                               {pos.unrealizedPNL >= 0 ? '+' : ''}${pos.unrealizedPNL.toFixed(2)}
@@ -1748,67 +1922,135 @@ const FuturesTradingTool = () => {
 
                   {/* Action Buttons */}
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 xl:grid-cols-7 gap-2 lg:gap-3">
-                    {/* DCA Buttons */}
-                    <button
-                      onClick={() => executeDCA(pos.id, 1)}
-                      disabled={pos.dca1Executed}
-                      className={`px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold ${
-                        pos.dca1Executed 
-                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
-                          : 'bg-yellow-600 hover:bg-yellow-700'
-                      }`}
-                    >
-                      {pos.dca1Executed ? '✓ DCA1 Done' : 'Execute DCA1 ($22)'}
-                    </button>
+                    {/* DCA Inputs */}
+                    <div className="flex flex-col gap-1">
+                      <div className="text-xs text-gray-400">DCA1 Margin</div>
+                      {pos.dca1Executed ? (
+                        <div className="text-xs text-yellow-400">✓ DCA1 Done</div>
+                      ) : (
+                        <div className="flex gap-1">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder={`$${allocation.perTradeDCA1.toFixed(0)}`}
+                            value={tempDCAValues.get(`${pos.id}-dca1`) || ''}
+                            onChange={(e) => updateTempDCA(pos.id, 1, e.target.value)}
+                            className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs w-16"
+                          />
+                          <button
+                            onClick={() => executeDcaWithInput(pos.id, 1)}
+                            className="bg-yellow-600 hover:bg-yellow-700 rounded px-2 py-1 text-xs"
+                          >
+                            ▶
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
-                    <button
-                      onClick={() => executeDCA(pos.id, 2)}
-                      disabled={pos.dca2Executed}
-                      className={`px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold ${
-                        pos.dca2Executed 
-                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
-                          : 'bg-yellow-600 hover:bg-yellow-700'
-                      }`}
-                    >
-                      {pos.dca2Executed ? '✓ DCA2 Done' : 'Execute DCA2 ($14)'}
-                    </button>
+                    <div className="flex flex-col gap-1">
+                      <div className="text-xs text-gray-400">DCA2 Margin</div>
+                      {pos.dca2Executed ? (
+                        <div className="text-xs text-yellow-400">✓ DCA2 Done</div>
+                      ) : (
+                        <div className="flex gap-1">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder={`$${allocation.perTradeDCA2.toFixed(0)}`}
+                            value={tempDCAValues.get(`${pos.id}-dca2`) || ''}
+                            onChange={(e) => updateTempDCA(pos.id, 2, e.target.value)}
+                            className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs w-16"
+                          />
+                          <button
+                            onClick={() => executeDcaWithInput(pos.id, 2)}
+                            className="bg-yellow-600 hover:bg-yellow-700 rounded px-2 py-1 text-xs"
+                          >
+                            ▶
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
-                    {/* TP Buttons */}
-                    <button
-                      onClick={() => closeTP(pos.id, 1)}
-                      disabled={pos.tp1Closed}
-                      className={`px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold ${
-                        pos.tp1Closed 
-                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
-                          : 'bg-green-600 hover:bg-green-700'
-                      }`}
-                    >
-                      {pos.tp1Closed ? '✓ TP1 Closed' : 'Close TP1 (40%)'}
-                    </button>
+                    {/* TP Inputs */}
+                    <div className="flex flex-col gap-1">
+                      <div className="text-xs text-gray-400">TP1 %</div>
+                      {pos.tp1Closed ? (
+                        <div className="text-xs text-green-400">✓ TP1 Closed</div>
+                      ) : (
+                        <div className="flex gap-1">
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            max="100"
+                            placeholder="40"
+                            value={tempTPValues.get(`${pos.id}-tp1`) || ''}
+                            onChange={(e) => updateTempTP(pos.id, 1, e.target.value)}
+                            className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs w-12"
+                          />
+                          <button
+                            onClick={() => executeTpWithInput(pos.id, 1)}
+                            className="bg-green-600 hover:bg-green-700 rounded px-2 py-1 text-xs"
+                          >
+                            ▶
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
-                    <button
-                      onClick={() => closeTP(pos.id, 2)}
-                      disabled={pos.tp2Closed}
-                      className={`px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold ${
-                        pos.tp2Closed 
-                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
-                          : 'bg-green-600 hover:bg-green-700'
-                      }`}
-                    >
-                      {pos.tp2Closed ? '✓ TP2 Closed' : 'Close TP2 (30%)'}
-                    </button>
+                    <div className="flex flex-col gap-1">
+                      <div className="text-xs text-gray-400">TP2 %</div>
+                      {pos.tp2Closed ? (
+                        <div className="text-xs text-green-400">✓ TP2 Closed</div>
+                      ) : (
+                        <div className="flex gap-1">
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            max="100"
+                            placeholder="30"
+                            value={tempTPValues.get(`${pos.id}-tp2`) || ''}
+                            onChange={(e) => updateTempTP(pos.id, 2, e.target.value)}
+                            className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs w-12"
+                          />
+                          <button
+                            onClick={() => executeTpWithInput(pos.id, 2)}
+                            className="bg-green-600 hover:bg-green-700 rounded px-2 py-1 text-xs"
+                          >
+                            ▶
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
-                    <button
-                      onClick={() => closeTP(pos.id, 3)}
-                      disabled={pos.tp3Closed}
-                      className={`px-2 lg:px-3 py-1.5 rounded text-xs sm:text-sm font-semibold ${
-                        pos.tp3Closed 
-                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
-                          : 'bg-green-600 hover:bg-green-700'
-                      }`}
-                    >
-                      {pos.tp3Closed ? '✓ TP3 Closed' : 'Close TP3 (30%)'}
-                    </button>
+                    <div className="flex flex-col gap-1">
+                      <div className="text-xs text-gray-400">TP3 %</div>
+                      {pos.tp3Closed ? (
+                        <div className="text-xs text-green-400">✓ TP3 Closed</div>
+                      ) : (
+                        <div className="flex gap-1">
+                          <input
+                            type="number"
+                            step="1"
+                            min="1"
+                            max="100"
+                            placeholder="30"
+                            value={tempTPValues.get(`${pos.id}-tp3`) || ''}
+                            onChange={(e) => updateTempTP(pos.id, 3, e.target.value)}
+                            className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-xs w-12"
+                          />
+                          <button
+                            onClick={() => executeTpWithInput(pos.id, 3)}
+                            className="bg-green-600 hover:bg-green-700 rounded px-2 py-1 text-xs"
+                          >
+                            ▶
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
                     {/* Close Position */}
                     <button

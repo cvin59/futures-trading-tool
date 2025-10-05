@@ -13,7 +13,9 @@ export const usePositions = (wallet: number, tradingFee: number) => {
             ...pos,
             autoUpdate: false,
             editingMargin: false,
+            editingLeverage: false,
             currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
+            leverage: pos.leverage || 10,
           }));
         } catch (e) {
           console.error('Error loading positions:', e);
@@ -24,6 +26,8 @@ export const usePositions = (wallet: number, tradingFee: number) => {
   });
 
   const [tempMarginValues, setTempMarginValues] = useState<Map<number, string>>(new Map());
+  const [tempTPValues, setTempTPValues] = useState<Map<string, string>>(new Map()); // key: `${posId}-tp${level}`
+  const [tempDCAValues, setTempDCAValues] = useState<Map<string, string>>(new Map()); // key: `${posId}-dca${level}`
 
   const allocation = calculateAllocation(wallet);
 
@@ -40,8 +44,10 @@ export const usePositions = (wallet: number, tradingFee: number) => {
     const levels = calculateLevels(formData.entryPrice, formData.direction);
     if (!levels) return false;
 
-    const baseMargin = allocation.perTradeInitial;
-    const positionValue = baseMargin * 10;
+    const customMargin = formData.initialMargin ? parseFloat(formData.initialMargin) : null;
+    const baseMargin = customMargin || allocation.perTradeInitial;
+    const leverage = formData.leverage || 10;
+    const positionValue = baseMargin * leverage;
     const openFee = calculateFee(positionValue, tradingFee);
     const actualMargin = baseMargin - openFee;
 
@@ -53,7 +59,8 @@ export const usePositions = (wallet: number, tradingFee: number) => {
       currentPrice: levels.entry,
       avgEntry: levels.entry,
       initialMargin: actualMargin,
-      positionSize: actualMargin * 10,
+      positionSize: actualMargin * leverage,
+      leverage,
       dca1Executed: false,
       dca2Executed: false,
       tp1Closed: false,
@@ -64,13 +71,14 @@ export const usePositions = (wallet: number, tradingFee: number) => {
       autoUpdate: true,
       totalFees: openFee,
       editingMargin: false,
+      editingLeverage: false,
     };
 
     setPositions(prev => [...prev, newPosition]);
     return true;
   };
 
-  const executeDCA = (posId: number, dcaLevel: 1 | 2) => {
+  const executeDCA = (posId: number, dcaLevel: 1 | 2, customMargin?: number) => {
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
@@ -78,12 +86,13 @@ export const usePositions = (wallet: number, tradingFee: number) => {
       if ((isFirst && pos.dca1Executed) || (!isFirst && pos.dca2Executed)) return pos;
 
       const dcaPrice = isFirst ? pos.dca1 : pos.dca2;
-      const baseDcaMargin = isFirst ? allocation.perTradeDCA1 : allocation.perTradeDCA2;
+      // Use custom margin if provided, otherwise use defaults
+      const baseDcaMargin = customMargin !== undefined ? customMargin : (isFirst ? allocation.perTradeDCA1 : allocation.perTradeDCA2);
       
-      const dcaPositionValue = baseDcaMargin * 10;
+      const dcaPositionValue = baseDcaMargin * pos.leverage;
       const dcaFee = calculateFee(dcaPositionValue, tradingFee);
       const actualDcaMargin = baseDcaMargin - dcaFee;
-      const dcaPosition = actualDcaMargin * 10;
+      const dcaPosition = actualDcaMargin * pos.leverage;
 
       const totalPosition = pos.positionSize + dcaPosition;
       const avgEntry = (pos.positionSize * pos.avgEntry + dcaPosition * dcaPrice) / totalPosition;
@@ -108,15 +117,19 @@ export const usePositions = (wallet: number, tradingFee: number) => {
     }));
   };
 
-  const closeTP = (posId: number, tpLevel: 1 | 2 | 3) => {
+  const closeTP = (posId: number, tpLevel: 1 | 2 | 3, customPercent?: number) => {
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
-      let closePercent = 40;
-      if (tpLevel === 2) closePercent = 30;
-      if (tpLevel === 3) closePercent = 30;
+      // Use custom percentage if provided, otherwise use defaults
+      let closePercent = customPercent;
+      if (closePercent === undefined) {
+        closePercent = 40;
+        if (tpLevel === 2) closePercent = 30;
+        if (tpLevel === 3) closePercent = 30;
+      }
 
-      const newRemaining = pos.remainingPercent - closePercent;
+      const newRemaining = Math.max(0, pos.remainingPercent - closePercent);
       
       return {
         ...pos,
@@ -174,7 +187,7 @@ export const usePositions = (wallet: number, tradingFee: number) => {
       return {
         ...pos,
         initialMargin: newMargin,
-        positionSize: newMargin * 10,
+        positionSize: newMargin * pos.leverage,
         editingMargin: false,
       };
     }));
@@ -192,6 +205,60 @@ export const usePositions = (wallet: number, tradingFee: number) => {
     ));
   };
 
+  const updateLeverage = (posId: number, newLeverage: number) => {
+    setPositions(positions.map(pos => {
+      if (pos.id !== posId) return pos;
+      return {
+        ...pos,
+        leverage: newLeverage,
+        positionSize: pos.initialMargin * newLeverage,
+        editingLeverage: false,
+      };
+    }));
+  };
+
+  const toggleEditingLeverage = (posId: number) => {
+    setPositions(positions.map(pos =>
+      pos.id === posId ? { ...pos, editingLeverage: !pos.editingLeverage } : pos
+    ));
+  };
+
+  // TP Helper Functions
+  const updateTempTP = (posId: number, tpLevel: 1 | 2 | 3, value: string) => {
+    setTempTPValues(prev => new Map(prev).set(`${posId}-tp${tpLevel}`, value));
+  };
+
+  const executeTpWithInput = (posId: number, tpLevel: 1 | 2 | 3) => {
+    const key = `${posId}-tp${tpLevel}`;
+    const value = tempTPValues.get(key);
+    if (value) {
+      closeTP(posId, tpLevel, parseFloat(value));
+      setTempTPValues(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(key);
+        return newMap;
+      });
+    }
+  };
+
+  // DCA Helper Functions
+  const updateTempDCA = (posId: number, dcaLevel: 1 | 2, value: string) => {
+    setTempDCAValues(prev => new Map(prev).set(`${posId}-dca${dcaLevel}`, value));
+  };
+
+  const executeDcaWithInput = (posId: number, dcaLevel: 1 | 2) => {
+    const key = `${posId}-dca${dcaLevel}`;
+    const value = tempDCAValues.get(key);
+    if (value) {
+      executeDCA(posId, dcaLevel, parseFloat(value));
+      setTempDCAValues(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(key);
+        return newMap;
+      });
+    }
+  };
+
   return {
     positions,
     setPositions,
@@ -206,5 +273,15 @@ export const usePositions = (wallet: number, tradingFee: number) => {
     updateMargin,
     toggleAutoUpdate,
     toggleEditingMargin,
+    updateLeverage,
+    toggleEditingLeverage,
+    tempTPValues,
+    setTempTPValues,
+    tempDCAValues,
+    setTempDCAValues,
+    updateTempTP,
+    executeTpWithInput,
+    updateTempDCA,
+    executeDcaWithInput,
   };
 };

@@ -14,6 +14,7 @@ export interface Position {
   tp3: number;
   initialMargin: number;
   positionSize: number;
+  leverage: number;
   dca1Executed: boolean;
   dca2Executed: boolean;
   tp1Closed: boolean;
@@ -24,12 +25,15 @@ export interface Position {
   autoUpdate: boolean;
   totalFees: number;
   editingMargin: boolean;
+  editingLeverage: boolean;
 }
 
 export interface FormData {
   symbol: string;
   direction: 'LONG' | 'SHORT';
   entryPrice: string;
+  leverage: number;
+  initialMargin: string;
 }
 
 export interface BinanceTickerData {

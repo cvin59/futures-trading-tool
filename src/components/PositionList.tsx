@@ -9,6 +9,8 @@ interface PositionListProps {
   setViewMode: (mode: ViewMode) => void;
   tempMarginValues: Map<number, string>;
   setTempMarginValues: React.Dispatch<React.SetStateAction<Map<number, string>>>;
+  tempLeverageValues: Map<number, string>;
+  setTempLeverageValues: React.Dispatch<React.SetStateAction<Map<number, string>>>;
   onExecuteDCA?: (posId: number, dcaLevel: 1 | 2) => void;
   onCloseTP?: (posId: number, tpLevel: 1 | 2 | 3) => void;
   onUpdateStopLoss?: (posId: number, newSL: number) => void;
@@ -16,6 +18,8 @@ interface PositionListProps {
   onUpdateMargin?: (posId: number, newMargin: number) => void;
   onToggleAutoUpdate: (posId: number) => void;
   onToggleEditingMargin?: (posId: number) => void;
+  onUpdateLeverage?: (posId: number, newLeverage: number) => void;
+  onToggleEditingLeverage?: (posId: number) => void;
 }
 
 export const PositionList: React.FC<PositionListProps> = ({
@@ -24,6 +28,8 @@ export const PositionList: React.FC<PositionListProps> = ({
   setViewMode,
   tempMarginValues: _tempMarginValues,
   setTempMarginValues: _setTempMarginValues,
+  tempLeverageValues: _tempLeverageValues,
+  setTempLeverageValues: _setTempLeverageValues,
   onExecuteDCA: _onExecuteDCA,
   onCloseTP: _onCloseTP,
   onUpdateStopLoss: _onUpdateStopLoss,
@@ -31,6 +37,8 @@ export const PositionList: React.FC<PositionListProps> = ({
   onUpdateMargin: _onUpdateMargin,
   onToggleAutoUpdate,
   onToggleEditingMargin: _onToggleEditingMargin,
+  onUpdateLeverage: _onUpdateLeverage,
+  onToggleEditingLeverage: _onToggleEditingLeverage,
 }) => {
   if (positions.length === 0) {
     return (
@@ -136,7 +144,7 @@ export const PositionList: React.FC<PositionListProps> = ({
                 </div>
 
                 {/* Basic position info */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 text-sm">
                   <div>
                     <div className="text-gray-400">Entry/Avg</div>
                     <div className="font-mono">{formatCurrency(pos.entry, 6)}</div>
@@ -163,6 +171,21 @@ export const PositionList: React.FC<PositionListProps> = ({
                     <div className="font-mono">${formatCurrency(pos.positionSize)}</div>
                     <div className="text-xs text-gray-400">{pos.remainingPercent}% remaining</div>
                   </div>
+                  <div>
+                    <div className="text-gray-400">Leverage</div>
+                    <div className="flex items-center gap-1">
+                      <div className="font-mono text-purple-400">{pos.leverage || 10}x</div>
+                      {_onToggleEditingLeverage && (
+                        <button
+                          onClick={() => _onToggleEditingLeverage(pos.id)}
+                          className="text-gray-400 hover:text-gray-200 text-xs"
+                        >
+                          ✎
+                        </button>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-400">Margin: ${formatCurrency(pos.initialMargin)}</div>
+                  </div>
                 </div>
               </div>
             );
@@ -179,6 +202,7 @@ export const PositionList: React.FC<PositionListProps> = ({
                   <th className="p-3 font-semibold">Type</th>
                   <th className="p-3 font-semibold">Entry</th>
                   <th className="p-3 font-semibold">Current</th>
+                  <th className="p-3 font-semibold">Leverage</th>
                   <th className="p-3 font-semibold">P&L</th>
                   <th className="p-3 font-semibold">Actions</th>
                 </tr>
@@ -204,6 +228,19 @@ export const PositionList: React.FC<PositionListProps> = ({
                       </td>
                       <td className="p-3 font-mono text-xs">
                         {formatCurrency(pos.currentPrice, 6)}
+                      </td>
+                      <td className="p-3">
+                        <div className="flex items-center gap-1">
+                          <div className="font-mono text-purple-400 font-bold">{pos.leverage || 10}x</div>
+                          {_onToggleEditingLeverage && (
+                            <button
+                              onClick={() => _onToggleEditingLeverage(pos.id)}
+                              className="text-gray-400 hover:text-gray-200 text-xs"
+                            >
+                              ✎
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="p-3">
                         <div className={`font-mono font-bold ${getPNLColor(pos.unrealizedPNL)}`}>
