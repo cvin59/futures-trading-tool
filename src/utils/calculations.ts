@@ -38,7 +38,7 @@ export const calculateLevels = (entry: string, direction: 'LONG' | 'SHORT') => {
   const entryNum = parseFloat(entry);
   if (!entryNum || isNaN(entryNum)) return null;
 
-  const sl = direction === 'LONG' ? entryNum * 0.93 : entryNum * 1.07;
+  const sl = direction === 'LONG' ? entryNum * 0.95 : entryNum * 1.05;
   const dca1 = direction === 'LONG' ? entryNum * 0.97 : entryNum * 1.03;
   const dca2 = direction === 'LONG' ? entryNum * 0.94 : entryNum * 1.06;
   const R = Math.abs(entryNum - sl);
