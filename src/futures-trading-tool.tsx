@@ -392,7 +392,13 @@ const FuturesTradingTool = () => {
     return positionValue * (tradingFee / 100);
   };
 
-  const updateMargin = (posId: number, newMargin: number) => {
+  const updateMargin = async (posId: number, newMargin: number) => {
+    // Sync from store before updating margin
+    const syncSuccess = await syncBeforeUpdate();
+    if (!syncSuccess) {
+      console.error('Failed to sync before updating margin');
+      return;
+    }
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
       
@@ -436,7 +442,13 @@ const FuturesTradingTool = () => {
     setTempMarginValues(prev => new Map(prev).set(posId, value));
   };
 
-  const updateLeverage = (posId: number, newLeverage: number) => {
+  const updateLeverage = async (posId: number, newLeverage: number) => {
+    // Sync from store before updating leverage
+    const syncSuccess = await syncBeforeUpdate();
+    if (!syncSuccess) {
+      console.error('Failed to sync before updating leverage');
+      return;
+    }
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
       return {
@@ -479,11 +491,11 @@ const FuturesTradingTool = () => {
     setTempTPValues(prev => new Map(prev).set(`${posId}-tp${tpLevel}`, value));
   };
 
-  const executeTpWithInput = (posId: number, tpLevel: 1 | 2 | 3) => {
+  const executeTpWithInput = async (posId: number, tpLevel: 1 | 2 | 3) => {
     const key = `${posId}-tp${tpLevel}`;
     const value = tempTPValues.get(key);
     if (value) {
-      closeTP(posId, tpLevel, parseFloat(value));
+      await closeTP(posId, tpLevel, parseFloat(value));
       setTempTPValues(prev => {
         const newMap = new Map(prev);
         newMap.delete(key);
@@ -497,11 +509,11 @@ const FuturesTradingTool = () => {
     setTempDCAValues(prev => new Map(prev).set(`${posId}-dca${dcaLevel}`, value));
   };
 
-  const executeDcaWithInput = (posId: number, dcaLevel: 1 | 2) => {
+  const executeDcaWithInput = async (posId: number, dcaLevel: 1 | 2) => {
     const key = `${posId}-dca${dcaLevel}`;
     const value = tempDCAValues.get(key);
     if (value) {
-      executeDCA(posId, dcaLevel, parseFloat(value));
+      await executeDCA(posId, dcaLevel, parseFloat(value));
       setTempDCAValues(prev => {
         const newMap = new Map(prev);
         newMap.delete(key);
@@ -651,8 +663,46 @@ const FuturesTradingTool = () => {
     return { sl, dca1, dca2, R, tp1, tp2, tp3, entry: entryNum };
   };
 
-  const addPosition = () => {
+  // Sync from store before making updates to ensure data consistency
+  const syncBeforeUpdate = async (): Promise<boolean> => {
+    try {
+      setSyncStatus('syncing');
+      const data = await loadFromFirestore();
+      if (data) {
+        const localTimestamp = parseInt(localStorage.getItem('futures-timestamp') || '0');
+        if (data.lastUpdated > localTimestamp) {
+          setPositions(data.positions.map((pos: Position) => ({
+            ...pos,
+            autoUpdate: true,
+            editingMargin: false,
+            editingLeverage: false,
+            currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
+            expectedPrice: pos.expectedPrice || pos.tp1 || pos.avgEntry,
+          })));
+          setWallet(data.wallet);
+          setTradingFee(data.tradingFee);
+          setLastSyncTime(data.lastUpdated);
+          localStorage.setItem('futures-timestamp', data.lastUpdated.toString());
+        }
+      }
+      setSyncStatus('synced');
+      return true;
+    } catch (error) {
+      console.error('Error syncing before update:', error);
+      setSyncStatus('error');
+      return false;
+    }
+  };
+
+  const addPosition = async () => {
     if (!formData.symbol || !formData.entryPrice) return;
+
+    // Sync from store before adding position
+    const syncSuccess = await syncBeforeUpdate();
+    if (!syncSuccess) {
+      console.error('Failed to sync before adding position');
+      return;
+    }
 
     const levels = calculateLevels(formData.entryPrice, formData.direction);
     if (!levels) return;
@@ -692,7 +742,13 @@ const FuturesTradingTool = () => {
     setFormData({ symbol: '', direction: 'LONG', entryPrice: '', leverage: 10, initialMargin: '' });
   };
 
-  const executeDCA = (posId: number, dcaLevel: 1 | 2, customMargin?: number) => {
+  const executeDCA = async (posId: number, dcaLevel: 1 | 2, customMargin?: number) => {
+    // Sync from store before executing DCA
+    const syncSuccess = await syncBeforeUpdate();
+    if (!syncSuccess) {
+      console.error('Failed to sync before executing DCA');
+      return;
+    }
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
@@ -731,7 +787,13 @@ const FuturesTradingTool = () => {
     }));
   };
 
-  const closeTP = (posId: number, tpLevel: 1 | 2 | 3, customPercent?: number) => {
+  const closeTP = async (posId: number, tpLevel: 1 | 2 | 3, customPercent?: number) => {
+    // Sync from store before closing TP
+    const syncSuccess = await syncBeforeUpdate();
+    if (!syncSuccess) {
+      console.error('Failed to sync before closing TP');
+      return;
+    }
     setPositions(positions.map(pos => {
       if (pos.id !== posId) return pos;
 
@@ -1545,11 +1607,11 @@ const FuturesTradingTool = () => {
                                   step="0.01"
                                   value={tempMarginValues.get(pos.id) || pos.initialMargin.toFixed(2)}
                                   onChange={(e) => updateTempMargin(pos.id, e.target.value)}
-                                  onKeyDown={(e) => {
+                                  onKeyDown={async (e) => {
                                     if (e.key === 'Enter') {
                                       const value = tempMarginValues.get(pos.id);
                                       if (value) {
-                                        updateMargin(pos.id, parseFloat(value) || pos.initialMargin);
+                                        await updateMargin(pos.id, parseFloat(value) || pos.initialMargin);
                                       }
                                     } else if (e.key === 'Escape') {
                                       toggleMarginEdit(pos.id);
@@ -1559,10 +1621,10 @@ const FuturesTradingTool = () => {
                                   autoFocus
                                 />
                                 <button
-                                  onClick={() => {
+                                  onClick={async () => {
                                     const value = tempMarginValues.get(pos.id);
                                     if (value) {
-                                      updateMargin(pos.id, parseFloat(value) || pos.initialMargin);
+                                      await updateMargin(pos.id, parseFloat(value) || pos.initialMargin);
                                     } else {
                                       toggleMarginEdit(pos.id);
                                     }
@@ -1604,11 +1666,11 @@ const FuturesTradingTool = () => {
                                   max="100"
                                   value={tempLeverageValues.get(pos.id) || pos.leverage.toString()}
                                   onChange={(e) => updateTempLeverage(pos.id, e.target.value)}
-                                  onKeyDown={(e) => {
+                                  onKeyDown={async (e) => {
                                     if (e.key === 'Enter') {
                                       const value = tempLeverageValues.get(pos.id);
                                       if (value) {
-                                        updateLeverage(pos.id, parseInt(value) || pos.leverage);
+                                        await updateLeverage(pos.id, parseInt(value) || pos.leverage);
                                       }
                                     } else if (e.key === 'Escape') {
                                       toggleEditingLeverage(pos.id);
@@ -1619,10 +1681,10 @@ const FuturesTradingTool = () => {
                                 />
                                 <span className="text-purple-400 text-xs">x</span>
                                 <button
-                                  onClick={() => {
+                                  onClick={async () => {
                                     const value = tempLeverageValues.get(pos.id);
                                     if (value) {
-                                      updateLeverage(pos.id, parseInt(value) || pos.leverage);
+                                      await updateLeverage(pos.id, parseInt(value) || pos.leverage);
                                     } else {
                                       toggleEditingLeverage(pos.id);
                                     }
