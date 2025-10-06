@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { Wifi, WifiOff, Cloud, CloudOff, RefreshCw, DollarSign, LogOut, User, ChevronUp, ChevronDown } from 'lucide-react';
+import { Wifi, WifiOff, Cloud, CloudOff, RefreshCw, DollarSign, LogOut, User, ChevronUp, ChevronDown, TrendingUp } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { saveToFirestore, loadFromFirestore, subscribeToFirestore, type TradingData, signIn, signUp, signOut, auth } from './lib/firebase';
 
@@ -532,17 +532,18 @@ const FuturesTradingTool = () => {
   }), [wallet]);
 
   const stats = useMemo(() => {
+    // Calculate actual used margin from positions' initialMargin (which includes all executed DCAs)
     const totalUsedMargin = positions.reduce((sum, pos) => {
-      let used = allocation.perTradeInitial;
-      if (pos.dca1Executed) used += allocation.perTradeDCA1;
-      if (pos.dca2Executed) used += allocation.perTradeDCA2;
-      return sum + used;
+      return sum + pos.initialMargin;
     }, 0);
 
     const totalPNL = positions.reduce((sum, pos) => sum + (pos.unrealizedPNL || 0), 0);
     const equity = wallet + totalPNL;
     const freeMargin = equity - totalUsedMargin;
     const marginLevel = totalUsedMargin > 0 ? (equity / totalUsedMargin) * 100 : 0;
+    
+    // Available fund for new positions (from original wallet, not including PNL)
+    const availableFund = wallet - totalUsedMargin;
 
     return {
       totalUsedMargin,
@@ -551,6 +552,8 @@ const FuturesTradingTool = () => {
       freeMargin,
       marginLevel,
       usedMarginPercent: (totalUsedMargin / wallet) * 100,
+      availableFund,
+      totalFund: wallet,
     };
   }, [positions, wallet, allocation]);
 
@@ -1306,15 +1309,15 @@ const FuturesTradingTool = () => {
           </div>
 
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <div className="text-gray-400 text-sm mb-1">Used Margin</div>
-            <div className="text-2xl font-bold">${stats.totalUsedMargin.toFixed(2)}</div>
-            <div className="text-sm text-gray-400">{stats.usedMarginPercent.toFixed(1)}% of wallet</div>
+            <div className="text-gray-400 text-sm mb-1">Used Fund</div>
+            <div className="text-2xl font-bold text-orange-400">${stats.totalUsedMargin.toFixed(2)}</div>
+            <div className="text-sm text-gray-400">{stats.usedMarginPercent.toFixed(1)}% of ${stats.totalFund.toFixed(0)}</div>
           </div>
 
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <div className="text-gray-400 text-sm mb-1">Free Margin</div>
-            <div className="text-2xl font-bold">${stats.freeMargin.toFixed(2)}</div>
-            <div className="text-sm text-gray-400">{((stats.freeMargin/wallet)*100).toFixed(1)}%</div>
+            <div className="text-gray-400 text-sm mb-1">Available Fund</div>
+            <div className="text-2xl font-bold text-blue-400">${stats.availableFund.toFixed(2)}</div>
+            <div className="text-sm text-gray-400">{((stats.availableFund/wallet)*100).toFixed(1)}% remaining</div>
           </div>
 
           <div className={`rounded-lg p-4 border ${getMarginBg(stats.marginLevel)} border-gray-700`}>
@@ -2249,6 +2252,23 @@ const FuturesTradingTool = () => {
               <div>• Default: <strong>{tradingFee}%</strong> (Binance Futures taker fee) - click "Trading Fee" in header to adjust</div>
               <div>• Click the <span className="text-blue-400">✎ edit icon</span> next to margin to manually adjust if needed</div>
               <div>• Total fees paid are tracked and displayed for each position</div>
+            </div>
+          </div>
+          
+          <div className="mt-3 p-3 bg-blue-900/20 border border-blue-600/30 rounded">
+            <div className="flex items-center gap-2 text-blue-400 font-semibold mb-1">
+              <TrendingUp size={16} />
+              <span>Margin Level Explained</span>
+            </div>
+            <div className="text-xs text-gray-300 space-y-1">
+              <div>• <strong>Formula:</strong> Margin Level = (Equity ÷ Used Margin) × 100</div>
+              <div>• <strong>Equity:</strong> Wallet Balance + Unrealized PNL</div>
+              <div>• <strong>Used Margin:</strong> Total margin allocated to open positions</div>
+              <div>• <strong>🟢 200%+:</strong> Excellent - Very safe, low risk of liquidation</div>
+              <div>• <strong>🟢 150%+:</strong> Safe - Good buffer against market volatility</div>
+              <div>• <strong>🟡 130%+:</strong> Caution - Monitor closely, consider reducing risk</div>
+              <div>• <strong>🟠 110%+:</strong> Warning - High risk, consider closing positions</div>
+              <div>• <strong>🔴 &lt;110%:</strong> Danger - Very high liquidation risk</div>
             </div>
           </div>
         </div>
