@@ -1429,7 +1429,7 @@ const FuturesTradingTool = () => {
             /* TABLE VIEW */
             <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[1200px]">
+                <table className="w-full text-sm md:min-w-[1200px]">
                   <thead className="bg-gray-900/50 border-b border-gray-700 sticky top-0">
                     <tr className="text-left">
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">
@@ -1442,13 +1442,13 @@ const FuturesTradingTool = () => {
                           {sortField === 'symbol' && sortOrder === 'desc' && <ChevronDown size={14} />}
                         </button>
                       </th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Type</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Entry/Avg</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Current</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Stop Loss</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">TP1/TP2/TP3</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Position</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Leverage</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap">Type</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap">Entry/Avg</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap">Current</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap">Stop Loss</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap">TP1/TP2/TP3</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap">Position</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap">Leverage</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">
                         <button
                           onClick={() => handleSort('pnl')}
@@ -1470,10 +1470,10 @@ const FuturesTradingTool = () => {
                         </button>
                       </th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Price Status</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Expected</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">DCA</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">TP Status</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap sticky right-0 bg-gray-900/50 min-w-[120px]">Actions</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap">Expected</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap">DCA</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap">TP Status</th>
+                      <th className="hidden md:table-cell p-2 md:p-3 font-semibold whitespace-nowrap sticky right-0 bg-gray-900/50 min-w-[120px]">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1488,18 +1488,18 @@ const FuturesTradingTool = () => {
                           <td className="p-2 md:p-3 whitespace-nowrap">
                             <div className="font-bold">{pos.symbol}</div>
                           </td>
-                          <td className="p-2 md:p-3 whitespace-nowrap">
+                          <td className="hidden md:table-cell p-2 md:p-3 whitespace-nowrap">
                             <span className={`px-2 py-1 rounded text-xs font-semibold ${
                               pos.direction === 'LONG' ? 'bg-green-600' : 'bg-red-600'
                             }`}>
                               {pos.direction}
                             </span>
                           </td>
-                          <td className="p-2 md:p-3 font-mono text-xs whitespace-nowrap">
+                          <td className="hidden md:table-cell p-2 md:p-3 font-mono text-xs whitespace-nowrap">
                             <div>{pos.entry.toFixed(6)}</div>
                             <div className="text-blue-400">{pos.avgEntry.toFixed(6)}</div>
                           </td>
-                          <td className="p-2 md:p-3 whitespace-nowrap">
+                          <td className="hidden md:table-cell p-2 md:p-3 whitespace-nowrap">
                             <div className="flex items-center gap-1">
                               <input
                                 type="number"
@@ -1525,15 +1525,15 @@ const FuturesTradingTool = () => {
                               {priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%
                             </div>
                           </td>
-                          <td className="p-2 md:p-3 font-mono text-xs text-red-400 whitespace-nowrap">
+                          <td className="hidden md:table-cell p-2 md:p-3 font-mono text-xs text-red-400 whitespace-nowrap">
                             {pos.sl.toFixed(6)}
                           </td>
-                          <td className="p-2 md:p-3 font-mono text-xs text-green-400 whitespace-nowrap">
+                          <td className="hidden md:table-cell p-2 md:p-3 font-mono text-xs text-green-400 whitespace-nowrap">
                             <div>{pos.tp1.toFixed(6)}</div>
                             <div>{pos.tp2.toFixed(6)}</div>
                             <div>{pos.tp3.toFixed(6)}</div>
                           </td>
-                          <td className="p-2 md:p-3 text-xs whitespace-nowrap">
+                          <td className="hidden md:table-cell p-2 md:p-3 text-xs whitespace-nowrap">
                             <div>${pos.positionSize.toFixed(0)}</div>
                             
                             {/* Margin with edit */}
@@ -1595,7 +1595,7 @@ const FuturesTradingTool = () => {
                           </td>
                           
                           {/* Leverage Column */}
-                          <td className="p-2 md:p-3 whitespace-nowrap">
+                          <td className="hidden md:table-cell p-2 md:p-3 whitespace-nowrap">
                             {pos.editingLeverage ? (
                               <div className="flex items-center gap-1">
                                 <input
@@ -1671,7 +1671,7 @@ const FuturesTradingTool = () => {
                               );
                             })()}
                           </td>
-                          <td className="p-2 md:p-3 text-xs whitespace-nowrap">
+                          <td className="hidden md:table-cell p-2 md:p-3 text-xs whitespace-nowrap">
                             <input
                               type="number"
                               step="any"
@@ -1688,7 +1688,7 @@ const FuturesTradingTool = () => {
                               );
                             })()}
                           </td>
-                          <td className="p-2 md:p-3 text-xs whitespace-nowrap">
+                          <td className="hidden md:table-cell p-2 md:p-3 text-xs whitespace-nowrap">
                             <div className={pos.dca1Executed ? 'text-yellow-400' : 'text-gray-500'}>
                               {pos.dca1Executed ? '✓ DCA1' : '○ DCA1'}
                             </div>
@@ -1696,7 +1696,7 @@ const FuturesTradingTool = () => {
                               {pos.dca2Executed ? '✓ DCA2' : '○ DCA2'}
                             </div>
                           </td>
-                          <td className="p-2 md:p-3 text-xs whitespace-nowrap">
+                          <td className="hidden md:table-cell p-2 md:p-3 text-xs whitespace-nowrap">
                             <div className={pos.tp1Closed ? 'text-green-400' : 'text-gray-500'}>
                               {pos.tp1Closed ? '✓ TP1' : '○ TP1'}
                             </div>
@@ -1707,7 +1707,7 @@ const FuturesTradingTool = () => {
                               {pos.tp3Closed ? '✓ TP3' : '○ TP3'}
                             </div>
                           </td>
-                          <td className="p-2 md:p-3 whitespace-nowrap sticky right-0 bg-gray-800 min-w-[120px]">
+                          <td className="hidden md:table-cell p-2 md:p-3 whitespace-nowrap sticky right-0 bg-gray-800 min-w-[120px]">
                             <div className="flex flex-col gap-1">
                               <button
                                 onClick={() => {
