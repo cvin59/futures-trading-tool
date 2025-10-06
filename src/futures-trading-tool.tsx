@@ -542,14 +542,26 @@ const FuturesTradingTool = () => {
     let usedDCA = 0;
 
     positions.forEach(pos => {
-      // Initial margin is always from the initial allocation
-      const initialAmount = allocation.perTradeInitial;
-      usedInitial += Math.min(pos.initialMargin, initialAmount);
+      // Calculate initial margin used (can be custom amount or default)
+      let initialMarginUsed = allocation.perTradeInitial;
       
-      // Any margin beyond the initial amount comes from DCA allocation
-      if (pos.initialMargin > initialAmount) {
-        usedDCA += pos.initialMargin - initialAmount;
+      // Track DCA margin separately based on executed DCAs
+      let dcaMarginUsed = 0;
+      
+      if (pos.dca1Executed) {
+        dcaMarginUsed += allocation.perTradeDCA1;
       }
+      if (pos.dca2Executed) {
+        dcaMarginUsed += allocation.perTradeDCA2;
+      }
+      
+      // The remaining margin after DCAs is the initial margin
+      // This handles both default and custom initial margins
+      const remainingMargin = pos.initialMargin - dcaMarginUsed;
+      initialMarginUsed = remainingMargin;
+      
+      usedInitial += initialMarginUsed;
+      usedDCA += dcaMarginUsed;
     });
 
     const totalPNL = positions.reduce((sum, pos) => sum + (pos.unrealizedPNL || 0), 0);
