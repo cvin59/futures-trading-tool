@@ -537,6 +537,21 @@ const FuturesTradingTool = () => {
       return sum + pos.initialMargin;
     }, 0);
 
+    // Calculate used amounts per allocation category
+    let usedInitial = 0;
+    let usedDCA = 0;
+
+    positions.forEach(pos => {
+      // Initial margin is always from the initial allocation
+      const initialAmount = allocation.perTradeInitial;
+      usedInitial += Math.min(pos.initialMargin, initialAmount);
+      
+      // Any margin beyond the initial amount comes from DCA allocation
+      if (pos.initialMargin > initialAmount) {
+        usedDCA += pos.initialMargin - initialAmount;
+      }
+    });
+
     const totalPNL = positions.reduce((sum, pos) => sum + (pos.unrealizedPNL || 0), 0);
     const equity = wallet + totalPNL;
     const freeMargin = equity - totalUsedMargin;
@@ -554,6 +569,10 @@ const FuturesTradingTool = () => {
       usedMarginPercent: (totalUsedMargin / wallet) * 100,
       availableFund,
       totalFund: wallet,
+      // Allocation usage tracking
+      usedInitial,
+      usedDCA,
+      usedEmergency: 0, // Emergency fund should never be touched
     };
   }, [positions, wallet, allocation]);
 
@@ -1342,16 +1361,39 @@ const FuturesTradingTool = () => {
               <div className="text-gray-400">Initial Fund (45%)</div>
               <div className="font-bold text-blue-400">${allocation.initial.toFixed(2)}</div>
               <div className="text-xs text-gray-500">${allocation.perTradeInitial.toFixed(2)}/trade</div>
+              <div className="text-xs mt-1">
+                <span className={`${stats.usedInitial > allocation.initial ? 'text-red-400' : 'text-green-400'}`}>
+                  Used: ${stats.usedInitial.toFixed(2)}
+                </span>
+                <span className="text-gray-500"> / ${allocation.initial.toFixed(2)}</span>
+                <div className={`text-xs ${stats.usedInitial > allocation.initial ? 'text-red-400' : 'text-gray-400'}`}>
+                  {((stats.usedInitial / allocation.initial) * 100).toFixed(1)}% used
+                </div>
+              </div>
             </div>
             <div>
               <div className="text-gray-400">DCA Reserve (40%)</div>
               <div className="font-bold text-purple-400">${allocation.dca.toFixed(2)}</div>
               <div className="text-xs text-gray-500">DCA1: ${allocation.perTradeDCA1.toFixed(2)} | DCA2: ${allocation.perTradeDCA2.toFixed(2)}</div>
+              <div className="text-xs mt-1">
+                <span className={`${stats.usedDCA > allocation.dca ? 'text-red-400' : 'text-green-400'}`}>
+                  Used: ${stats.usedDCA.toFixed(2)}
+                </span>
+                <span className="text-gray-500"> / ${allocation.dca.toFixed(2)}</span>
+                <div className={`text-xs ${stats.usedDCA > allocation.dca ? 'text-red-400' : 'text-gray-400'}`}>
+                  {((stats.usedDCA / allocation.dca) * 100).toFixed(1)}% used
+                </div>
+              </div>
             </div>
             <div>
               <div className="text-gray-400">Emergency (15%)</div>
               <div className="font-bold text-red-400">${allocation.emergency.toFixed(2)}</div>
               <div className="text-xs text-gray-500">Do not touch</div>
+              <div className="text-xs mt-1">
+                <span className="text-green-400">Used: $0.00</span>
+                <span className="text-gray-500"> / ${allocation.emergency.toFixed(2)}</span>
+                <div className="text-xs text-gray-400">0.0% used</div>
+              </div>
             </div>
           </div>
         </div>
