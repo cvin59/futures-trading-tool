@@ -655,7 +655,7 @@ const FuturesTradingTool = () => {
     const entryNum = parseFloat(entry);
     if (!entryNum || isNaN(entryNum)) return null;
 
-    const sl = direction === 'LONG' ? entryNum * 0.93 : entryNum * 1.07;
+    const sl = direction === 'LONG' ? entryNum * 0.95 : entryNum * 1.05;
     const dca1 = direction === 'LONG' ? entryNum * 0.97 : entryNum * 1.03;
     const dca2 = direction === 'LONG' ? entryNum * 0.94 : entryNum * 1.06;
     const R = Math.abs(entryNum - sl);
@@ -1915,7 +1915,7 @@ const FuturesTradingTool = () => {
                         <input
                           type="number"
                           step="0.1"
-                          placeholder={pos.direction === 'LONG' ? '-7' : '+7'}
+                          placeholder={pos.direction === 'LONG' ? '-5' : '+5'}
                           onChange={(e) => {
                             if (e.target.value) {
                               updateStopLossByPercent(pos.id, e.target.value);
@@ -1926,7 +1926,7 @@ const FuturesTradingTool = () => {
                         <span className="text-gray-500">%</span>
                       </div>
                       <div className="text-xs text-gray-500 w-24">
-                        {pos.direction === 'LONG' ? 'e.g., -7' : 'e.g., +7'}
+                        {pos.direction === 'LONG' ? 'e.g., -5' : 'e.g., +5'}
                       </div>
                     </div>
                   </div>
@@ -2178,7 +2178,7 @@ const FuturesTradingTool = () => {
             <div>
               <div className="font-semibold text-blue-400 mb-2">LONG Setup</div>
               <div className="space-y-1 text-gray-300">
-                <div>• SL: Entry × 0.93 (-7%)</div>
+                <div>• SL: Entry × 0.95 (-5%)</div>
                 <div>• DCA1: Entry × 0.97 (-3%)</div>
                 <div>• DCA2: Entry × 0.94 (-6%)</div>
                 <div>• TP: Entry + R, +2R, +3R</div>
@@ -2187,7 +2187,7 @@ const FuturesTradingTool = () => {
             <div>
               <div className="font-semibold text-red-400 mb-2">SHORT Setup</div>
               <div className="space-y-1 text-gray-300">
-                <div>• SL: Entry × 1.07 (+7%)</div>
+                <div>• SL: Entry × 1.05 (+5%)</div>
                 <div>• DCA1: Entry × 1.03 (+3%)</div>
                 <div>• DCA2: Entry × 1.06 (+6%)</div>
                 <div>• TP: Entry - R, -2R, -3R</div>
