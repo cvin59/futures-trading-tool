@@ -89,7 +89,8 @@ const FuturesTradingTool = () => {
   });
   
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('table');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
+  const [sortField, setSortField] = useState<'symbol' | 'pnl' | 'roi' | null>(null);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [formData, setFormData] = useState<FormData>({
     symbol: '',
     direction: 'LONG',
@@ -542,21 +543,42 @@ const FuturesTradingTool = () => {
   }, [positions, wallet, allocation]);
 
   const sortedPositions = useMemo(() => {
-    if (!sortOrder) return positions;
+    if (!sortField) return positions;
     
     return [...positions].sort((a, b) => {
-      const comparison = a.symbol.localeCompare(b.symbol);
+      let comparison = 0;
+      
+      switch (sortField) {
+        case 'symbol':
+          comparison = a.symbol.localeCompare(b.symbol);
+          break;
+        case 'pnl':
+          comparison = (a.unrealizedPNL || 0) - (b.unrealizedPNL || 0);
+          break;
+        case 'roi': {
+          const roiA = ((a.unrealizedPNL || 0) / a.initialMargin) * 100;
+          const roiB = ((b.unrealizedPNL || 0) / b.initialMargin) * 100;
+          comparison = roiA - roiB;
+          break;
+        }
+        default:
+          return 0;
+      }
+      
       return sortOrder === 'asc' ? comparison : -comparison;
     });
-  }, [positions, sortOrder]);
+  }, [positions, sortField, sortOrder]);
 
-  const handleSymbolSort = () => {
-    if (sortOrder === null) {
-      setSortOrder('asc');
-    } else if (sortOrder === 'asc') {
-      setSortOrder('desc');
+  const handleSort = (field: 'symbol' | 'pnl' | 'roi') => {
+    if (sortField === field) {
+      if (sortOrder === 'asc') {
+        setSortOrder('desc');
+      } else {
+        setSortField(null);
+      }
     } else {
-      setSortOrder(null);
+      setSortField(field);
+      setSortOrder('asc');
     }
   };
 
@@ -1412,12 +1434,12 @@ const FuturesTradingTool = () => {
                     <tr className="text-left">
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">
                         <button
-                          onClick={handleSymbolSort}
+                          onClick={() => handleSort('symbol')}
                           className="flex items-center gap-1 hover:text-blue-400 transition-colors"
                         >
                           Symbol
-                          {sortOrder === 'asc' && <ChevronUp size={14} />}
-                          {sortOrder === 'desc' && <ChevronDown size={14} />}
+                          {sortField === 'symbol' && sortOrder === 'asc' && <ChevronUp size={14} />}
+                          {sortField === 'symbol' && sortOrder === 'desc' && <ChevronDown size={14} />}
                         </button>
                       </th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Type</th>
@@ -1427,8 +1449,26 @@ const FuturesTradingTool = () => {
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">TP1/TP2/TP3</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Position</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Leverage</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">P&L</th>
-                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">ROI</th>
+                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">
+                        <button
+                          onClick={() => handleSort('pnl')}
+                          className="flex items-center gap-1 hover:text-blue-400 transition-colors"
+                        >
+                          P&L
+                          {sortField === 'pnl' && sortOrder === 'asc' && <ChevronUp size={14} />}
+                          {sortField === 'pnl' && sortOrder === 'desc' && <ChevronDown size={14} />}
+                        </button>
+                      </th>
+                      <th className="p-2 md:p-3 font-semibold whitespace-nowrap">
+                        <button
+                          onClick={() => handleSort('roi')}
+                          className="flex items-center gap-1 hover:text-blue-400 transition-colors"
+                        >
+                          ROI
+                          {sortField === 'roi' && sortOrder === 'asc' && <ChevronUp size={14} />}
+                          {sortField === 'roi' && sortOrder === 'desc' && <ChevronDown size={14} />}
+                        </button>
+                      </th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Price Status</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">Expected</th>
                       <th className="p-2 md:p-3 font-semibold whitespace-nowrap">DCA</th>
