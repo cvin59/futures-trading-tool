@@ -1309,13 +1309,13 @@ const FuturesTradingTool = () => {
           </div>
 
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <div className="text-gray-400 text-sm mb-1">Used Fund</div>
+            <div className="text-gray-400 text-sm mb-1">Used Margin</div>
             <div className="text-2xl font-bold text-orange-400">${stats.totalUsedMargin.toFixed(2)}</div>
             <div className="text-sm text-gray-400">{stats.usedMarginPercent.toFixed(1)}% of ${stats.totalFund.toFixed(0)}</div>
           </div>
 
           <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-            <div className="text-gray-400 text-sm mb-1">Available Fund</div>
+            <div className="text-gray-400 text-sm mb-1">Free Margin</div>
             <div className="text-2xl font-bold text-blue-400">${stats.availableFund.toFixed(2)}</div>
             <div className="text-sm text-gray-400">{((stats.availableFund/wallet)*100).toFixed(1)}% remaining</div>
           </div>
