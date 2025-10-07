@@ -33,6 +33,9 @@ interface Position {
   totalFees: number;
   editingMargin: boolean;
   editingLeverage: boolean;
+  editingTP1: boolean;
+  editingTP2: boolean;
+  editingTP3: boolean;
 }
 
 interface FormData {
@@ -77,6 +80,10 @@ const FuturesTradingTool = () => {
             ...pos,
             autoUpdate: true,
             editingMargin: false,
+            editingLeverage: false,
+            editingTP1: false,
+            editingTP2: false,
+            editingTP3: false,
             currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
             expectedPrice: pos.expectedPrice || pos.tp1 || pos.avgEntry,
           }));
@@ -112,6 +119,7 @@ const FuturesTradingTool = () => {
   const [tempLeverageValues, setTempLeverageValues] = useState<Map<number, string>>(new Map());
   const [tempTPValues, setTempTPValues] = useState<Map<string, string>>(new Map()); // key: `${posId}-tp${level}`
   const [tempDCAValues, setTempDCAValues] = useState<Map<string, string>>(new Map()); // key: `${posId}-dca${level}`
+  const [tempTPLevelValues, setTempTPLevelValues] = useState<Map<string, string>>(new Map()); // key: `${posId}-tpLevel${level}`
 
   // Firebase sync state
   const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'offline' | 'error'>('offline');
@@ -207,6 +215,10 @@ const FuturesTradingTool = () => {
               ...pos,
               autoUpdate: true,
               editingMargin: false,
+              editingLeverage: false,
+              editingTP1: false,
+              editingTP2: false,
+              editingTP3: false,
               currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
               expectedPrice: pos.expectedPrice || pos.tp1 || pos.avgEntry,
             })));
@@ -238,6 +250,9 @@ const FuturesTradingTool = () => {
             autoUpdate: true,
             editingMargin: false,
             editingLeverage: false,
+            editingTP1: false,
+            editingTP2: false,
+            editingTP3: false,
             currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
             expectedPrice: pos.expectedPrice || pos.tp1 || pos.avgEntry,
           })));
@@ -273,6 +288,10 @@ const FuturesTradingTool = () => {
             ...pos,
             autoUpdate: false,
             editingMargin: false,
+            editingLeverage: false,
+            editingTP1: false,
+            editingTP2: false,
+            editingTP3: false,
           })),
           lastUpdated: Date.now(),
         };
@@ -504,6 +523,56 @@ const FuturesTradingTool = () => {
     }
   };
 
+  // TP Level Editing Functions
+  const updateTempTPLevel = (posId: number, tpLevel: 1 | 2 | 3, value: string) => {
+    setTempTPLevelValues(prev => new Map(prev).set(`${posId}-tpLevel${tpLevel}`, value));
+  };
+
+  const toggleTPEdit = (posId: number, tpLevel: 1 | 2 | 3) => {
+    const pos = positions.find(p => p.id === posId);
+    if (!pos) return;
+    
+    const editingField = `editingTP${tpLevel}` as keyof Position;
+    const isEditing = pos[editingField] as boolean;
+    
+    if (!isEditing) {
+      const currentValue = tpLevel === 1 ? pos.tp1 : tpLevel === 2 ? pos.tp2 : pos.tp3;
+      setTempTPLevelValues(prev => new Map(prev).set(`${posId}-tpLevel${tpLevel}`, currentValue.toFixed(6)));
+    } else {
+      setTempTPLevelValues(prev => {
+        const newMap = new Map(prev);
+        newMap.delete(`${posId}-tpLevel${tpLevel}`);
+        return newMap;
+      });
+    }
+    
+    setPositions(positions.map(p => 
+      p.id === posId ? { ...p, [editingField]: !isEditing } : p
+    ));
+  };
+
+  const updateTPLevel = async (posId: number, tpLevel: 1 | 2 | 3, newPrice: number) => {
+    // Sync from store before updating TP
+    const syncSuccess = await syncBeforeUpdate();
+    if (!syncSuccess) {
+      console.error('Failed to sync before updating TP level');
+      return;
+    }
+    
+    setPositions(positions.map(pos => {
+      if (pos.id !== posId) return pos;
+      
+      const editingField = `editingTP${tpLevel}` as keyof Position;
+      const tpField = `tp${tpLevel}` as keyof Position;
+      
+      return {
+        ...pos,
+        [tpField]: newPrice,
+        [editingField]: false,
+      };
+    }));
+  };
+
   // DCA Helper Functions
   const updateTempDCA = (posId: number, dcaLevel: 1 | 2, value: string) => {
     setTempDCAValues(prev => new Map(prev).set(`${posId}-dca${dcaLevel}`, value));
@@ -710,6 +779,9 @@ const FuturesTradingTool = () => {
             autoUpdate: true,
             editingMargin: false,
             editingLeverage: false,
+            editingTP1: false,
+            editingTP2: false,
+            editingTP3: false,
             currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
             expectedPrice: pos.expectedPrice || pos.tp1 || pos.avgEntry,
           })));
@@ -770,6 +842,9 @@ const FuturesTradingTool = () => {
       totalFees: openFee,
       editingMargin: false,
       editingLeverage: false,
+      editingTP1: false,
+      editingTP2: false,
+      editingTP3: false,
     };
 
     setPositions([...positions, newPosition]);
@@ -1000,6 +1075,10 @@ const FuturesTradingTool = () => {
         ...pos,
         autoUpdate: false,
         editingMargin: false,
+        editingLeverage: false,
+        editingTP1: false,
+        editingTP2: false,
+        editingTP3: false,
       })),
       exportDate: new Date().toISOString(),
     };
@@ -1027,6 +1106,9 @@ const FuturesTradingTool = () => {
             autoUpdate: false,
             editingMargin: false,
             editingLeverage: false,
+            editingTP1: false,
+            editingTP2: false,
+            editingTP3: false,
             currentPrice: pos.currentPrice || pos.avgEntry || pos.entry,
             totalFees: pos.totalFees || 0,
             remainingPercent: pos.remainingPercent || 100,
@@ -1648,9 +1730,165 @@ const FuturesTradingTool = () => {
                             {pos.sl.toFixed(6)}
                           </td>
                           <td className="hidden md:table-cell p-2 md:p-3 font-mono text-xs text-green-400 whitespace-nowrap">
-                            <div>{pos.tp1.toFixed(6)}</div>
-                            <div>{pos.tp2.toFixed(6)}</div>
-                            <div>{pos.tp3.toFixed(6)}</div>
+                            <div className="flex items-center gap-1">
+                              {pos.editingTP1 ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    step="0.000001"
+                                    value={tempTPLevelValues.get(`${pos.id}-tpLevel1`) || pos.tp1.toFixed(6)}
+                                    onChange={(e) => updateTempTPLevel(pos.id, 1, e.target.value)}
+                                    onKeyDown={async (e) => {
+                                      if (e.key === 'Enter') {
+                                        const value = tempTPLevelValues.get(`${pos.id}-tpLevel1`);
+                                        if (value) {
+                                          await updateTPLevel(pos.id, 1, parseFloat(value) || pos.tp1);
+                                        }
+                                      } else if (e.key === 'Escape') {
+                                        toggleTPEdit(pos.id, 1);
+                                      }
+                                    }}
+                                    className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-20 text-xs"
+                                    autoFocus
+                                  />
+                                  <button
+                                    onClick={async () => {
+                                      const value = tempTPLevelValues.get(`${pos.id}-tpLevel1`);
+                                      if (value) {
+                                        await updateTPLevel(pos.id, 1, parseFloat(value) || pos.tp1);
+                                      } else {
+                                        toggleTPEdit(pos.id, 1);
+                                      }
+                                    }}
+                                    className="text-green-400 hover:text-green-300 text-xs"
+                                  >
+                                    ✓
+                                  </button>
+                                  <button
+                                    onClick={() => toggleTPEdit(pos.id, 1)}
+                                    className="text-gray-400 hover:text-gray-200 text-xs"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1">
+                                  <span>{pos.tp1.toFixed(6)}</span>
+                                  <button
+                                    onClick={() => toggleTPEdit(pos.id, 1)}
+                                    className="text-blue-400 hover:text-blue-300"
+                                  >
+                                    ✎
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {pos.editingTP2 ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    step="0.000001"
+                                    value={tempTPLevelValues.get(`${pos.id}-tpLevel2`) || pos.tp2.toFixed(6)}
+                                    onChange={(e) => updateTempTPLevel(pos.id, 2, e.target.value)}
+                                    onKeyDown={async (e) => {
+                                      if (e.key === 'Enter') {
+                                        const value = tempTPLevelValues.get(`${pos.id}-tpLevel2`);
+                                        if (value) {
+                                          await updateTPLevel(pos.id, 2, parseFloat(value) || pos.tp2);
+                                        }
+                                      } else if (e.key === 'Escape') {
+                                        toggleTPEdit(pos.id, 2);
+                                      }
+                                    }}
+                                    className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-20 text-xs"
+                                    autoFocus
+                                  />
+                                  <button
+                                    onClick={async () => {
+                                      const value = tempTPLevelValues.get(`${pos.id}-tpLevel2`);
+                                      if (value) {
+                                        await updateTPLevel(pos.id, 2, parseFloat(value) || pos.tp2);
+                                      } else {
+                                        toggleTPEdit(pos.id, 2);
+                                      }
+                                    }}
+                                    className="text-green-400 hover:text-green-300 text-xs"
+                                  >
+                                    ✓
+                                  </button>
+                                  <button
+                                    onClick={() => toggleTPEdit(pos.id, 2)}
+                                    className="text-gray-400 hover:text-gray-200 text-xs"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1">
+                                  <span>{pos.tp2.toFixed(6)}</span>
+                                  <button
+                                    onClick={() => toggleTPEdit(pos.id, 2)}
+                                    className="text-blue-400 hover:text-blue-300"
+                                  >
+                                    ✎
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1">
+                              {pos.editingTP3 ? (
+                                <div className="flex items-center gap-1">
+                                  <input
+                                    type="number"
+                                    step="0.000001"
+                                    value={tempTPLevelValues.get(`${pos.id}-tpLevel3`) || pos.tp3.toFixed(6)}
+                                    onChange={(e) => updateTempTPLevel(pos.id, 3, e.target.value)}
+                                    onKeyDown={async (e) => {
+                                      if (e.key === 'Enter') {
+                                        const value = tempTPLevelValues.get(`${pos.id}-tpLevel3`);
+                                        if (value) {
+                                          await updateTPLevel(pos.id, 3, parseFloat(value) || pos.tp3);
+                                        }
+                                      } else if (e.key === 'Escape') {
+                                        toggleTPEdit(pos.id, 3);
+                                      }
+                                    }}
+                                    className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-20 text-xs"
+                                    autoFocus
+                                  />
+                                  <button
+                                    onClick={async () => {
+                                      const value = tempTPLevelValues.get(`${pos.id}-tpLevel3`);
+                                      if (value) {
+                                        await updateTPLevel(pos.id, 3, parseFloat(value) || pos.tp3);
+                                      } else {
+                                        toggleTPEdit(pos.id, 3);
+                                      }
+                                    }}
+                                    className="text-green-400 hover:text-green-300 text-xs"
+                                  >
+                                    ✓
+                                  </button>
+                                  <button
+                                    onClick={() => toggleTPEdit(pos.id, 3)}
+                                    className="text-gray-400 hover:text-gray-200 text-xs"
+                                  >
+                                    ✕
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1">
+                                  <span>{pos.tp3.toFixed(6)}</span>
+                                  <button
+                                    onClick={() => toggleTPEdit(pos.id, 3)}
+                                    className="text-blue-400 hover:text-blue-300"
+                                  >
+                                    ✎
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                           </td>
                           <td className="hidden md:table-cell p-2 md:p-3 text-xs whitespace-nowrap">
                             <div>${pos.positionSize.toFixed(0)}</div>
@@ -2005,14 +2243,167 @@ const FuturesTradingTool = () => {
 
                     <div className="bg-green-900/20 p-2 rounded">
                       <div className="text-gray-400 text-xs">Take Profits</div>
-                      <div className="font-mono text-green-400 text-xs">
-                        TP1: {pos.tp1.toFixed(6)}
+                      <div className="flex items-center gap-1 font-mono text-green-400 text-xs">
+                        {pos.editingTP1 ? (
+                          <div className="flex items-center gap-1">
+                            <span>TP1:</span>
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={tempTPLevelValues.get(`${pos.id}-tpLevel1`) || pos.tp1.toFixed(6)}
+                              onChange={(e) => updateTempTPLevel(pos.id, 1, e.target.value)}
+                              onKeyDown={async (e) => {
+                                if (e.key === 'Enter') {
+                                  const value = tempTPLevelValues.get(`${pos.id}-tpLevel1`);
+                                  if (value) {
+                                    await updateTPLevel(pos.id, 1, parseFloat(value) || pos.tp1);
+                                  }
+                                } else if (e.key === 'Escape') {
+                                  toggleTPEdit(pos.id, 1);
+                                }
+                              }}
+                              className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-24 text-xs"
+                              autoFocus
+                            />
+                            <button
+                              onClick={async () => {
+                                const value = tempTPLevelValues.get(`${pos.id}-tpLevel1`);
+                                if (value) {
+                                  await updateTPLevel(pos.id, 1, parseFloat(value) || pos.tp1);
+                                } else {
+                                  toggleTPEdit(pos.id, 1);
+                                }
+                              }}
+                              className="text-green-400 hover:text-green-300 text-xs"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={() => toggleTPEdit(pos.id, 1)}
+                              className="text-gray-400 hover:text-gray-200 text-xs"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <span>TP1: {pos.tp1.toFixed(6)}</span>
+                            <button
+                              onClick={() => toggleTPEdit(pos.id, 1)}
+                              className="text-blue-400 hover:text-blue-300"
+                            >
+                              ✎
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      <div className="font-mono text-green-400 text-xs">
-                        TP2: {pos.tp2.toFixed(6)}
+                      <div className="flex items-center gap-1 font-mono text-green-400 text-xs">
+                        {pos.editingTP2 ? (
+                          <div className="flex items-center gap-1">
+                            <span>TP2:</span>
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={tempTPLevelValues.get(`${pos.id}-tpLevel2`) || pos.tp2.toFixed(6)}
+                              onChange={(e) => updateTempTPLevel(pos.id, 2, e.target.value)}
+                              onKeyDown={async (e) => {
+                                if (e.key === 'Enter') {
+                                  const value = tempTPLevelValues.get(`${pos.id}-tpLevel2`);
+                                  if (value) {
+                                    await updateTPLevel(pos.id, 2, parseFloat(value) || pos.tp2);
+                                  }
+                                } else if (e.key === 'Escape') {
+                                  toggleTPEdit(pos.id, 2);
+                                }
+                              }}
+                              className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-24 text-xs"
+                              autoFocus
+                            />
+                            <button
+                              onClick={async () => {
+                                const value = tempTPLevelValues.get(`${pos.id}-tpLevel2`);
+                                if (value) {
+                                  await updateTPLevel(pos.id, 2, parseFloat(value) || pos.tp2);
+                                } else {
+                                  toggleTPEdit(pos.id, 2);
+                                }
+                              }}
+                              className="text-green-400 hover:text-green-300 text-xs"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={() => toggleTPEdit(pos.id, 2)}
+                              className="text-gray-400 hover:text-gray-200 text-xs"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <span>TP2: {pos.tp2.toFixed(6)}</span>
+                            <button
+                              onClick={() => toggleTPEdit(pos.id, 2)}
+                              className="text-blue-400 hover:text-blue-300"
+                            >
+                              ✎
+                            </button>
+                          </div>
+                        )}
                       </div>
-                      <div className="font-mono text-green-400 text-xs">
-                        TP3: {pos.tp3.toFixed(6)}
+                      <div className="flex items-center gap-1 font-mono text-green-400 text-xs">
+                        {pos.editingTP3 ? (
+                          <div className="flex items-center gap-1">
+                            <span>TP3:</span>
+                            <input
+                              type="number"
+                              step="0.000001"
+                              value={tempTPLevelValues.get(`${pos.id}-tpLevel3`) || pos.tp3.toFixed(6)}
+                              onChange={(e) => updateTempTPLevel(pos.id, 3, e.target.value)}
+                              onKeyDown={async (e) => {
+                                if (e.key === 'Enter') {
+                                  const value = tempTPLevelValues.get(`${pos.id}-tpLevel3`);
+                                  if (value) {
+                                    await updateTPLevel(pos.id, 3, parseFloat(value) || pos.tp3);
+                                  }
+                                } else if (e.key === 'Escape') {
+                                  toggleTPEdit(pos.id, 3);
+                                }
+                              }}
+                              className="bg-gray-700 border border-blue-500 rounded px-1 py-0.5 w-24 text-xs"
+                              autoFocus
+                            />
+                            <button
+                              onClick={async () => {
+                                const value = tempTPLevelValues.get(`${pos.id}-tpLevel3`);
+                                if (value) {
+                                  await updateTPLevel(pos.id, 3, parseFloat(value) || pos.tp3);
+                                } else {
+                                  toggleTPEdit(pos.id, 3);
+                                }
+                              }}
+                              className="text-green-400 hover:text-green-300 text-xs"
+                            >
+                              ✓
+                            </button>
+                            <button
+                              onClick={() => toggleTPEdit(pos.id, 3)}
+                              className="text-gray-400 hover:text-gray-200 text-xs"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <span>TP3: {pos.tp3.toFixed(6)}</span>
+                            <button
+                              onClick={() => toggleTPEdit(pos.id, 3)}
+                              className="text-blue-400 hover:text-blue-300"
+                            >
+                              ✎
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
 
