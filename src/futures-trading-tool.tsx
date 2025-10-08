@@ -196,8 +196,24 @@ const FuturesTradingTool = () => {
   };
 
   const handleLogout = async () => {
-    if (confirm('🔒 Log out? Your data will sync back when you log in again.')) {
+    if (confirm('🔒 Log out? This will clear your local data. Your data will sync back when you log in again.')) {
       await signOut();
+      
+      // Clear local storage on logout
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('futures-positions');
+        localStorage.removeItem('futures-wallet');
+        localStorage.removeItem('futures-fee');
+        localStorage.removeItem('futures-timestamp');
+      }
+      
+      // Reset state to defaults
+      setPositions([]);
+      setWallet(906.3);
+      setTradingFee(0.05);
+      setLastSyncTime(0);
+      setSyncStatus('offline');
+      
       setShowAuthModal(true);
     }
   };
