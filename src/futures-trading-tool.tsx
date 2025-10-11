@@ -1179,7 +1179,7 @@ const FuturesTradingTool = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-gray-100">
+    <div className="bg-gray-900 text-gray-100">
       {/* Auth Modal */}
       {showAuthModal && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">

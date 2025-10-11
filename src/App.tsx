@@ -1,7 +1,7 @@
-import FuturesTradingTool from './futures-trading-tool'
+import TradingApp from './components/TradingApp'
 
 function App() {
-  return <FuturesTradingTool />
+  return <TradingApp />
 }
 
 export default App
