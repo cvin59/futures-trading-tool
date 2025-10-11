@@ -1,4 +1,5 @@
-import { Platform, PlatformConfig } from '../types/platform';
+import { Platform } from '../types/platform';
+import type { PlatformConfig } from '../types/platform';
 
 class BinancePlatform implements PlatformConfig {
   name = 'Binance';

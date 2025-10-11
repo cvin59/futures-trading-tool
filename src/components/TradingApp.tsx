@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { TrendingUp, TrendingDown } from 'lucide-react';
+import { TrendingUp, Target } from 'lucide-react';
 import FuturesTradingTool from '../futures-trading-tool';
-import SpotTradingTool from './SpotTradingTool';
+import PositionTradingTool from './PositionTradingTool';
 
-type TabType = 'futures' | 'spot';
+type TabType = 'futures' | 'position';
 
 export default function TradingApp() {
   const [activeTab, setActiveTab] = useState<TabType>('futures');
@@ -26,15 +26,15 @@ export default function TradingApp() {
               Futures Trading
             </button>
             <button
-              onClick={() => setActiveTab('spot')}
+              onClick={() => setActiveTab('position')}
               className={`flex items-center gap-2 py-4 px-2 border-b-2 font-medium text-sm transition-colors ${
-                activeTab === 'spot'
-                  ? 'border-green-500 text-green-400'
+                activeTab === 'position'
+                  ? 'border-purple-500 text-purple-400'
                   : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-300'
               }`}
             >
-              <TrendingDown size={16} />
-              Spot Trading
+              <Target size={16} />
+              Position Trading
             </button>
           </div>
         </div>
@@ -43,7 +43,7 @@ export default function TradingApp() {
       {/* Tab Content */}
       <div className="tab-content">
         {activeTab === 'futures' && <FuturesTradingTool />}
-        {activeTab === 'spot' && <SpotTradingTool />}
+        {activeTab === 'position' && <PositionTradingTool />}
       </div>
     </div>
   );

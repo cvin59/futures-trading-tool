@@ -1,7 +1,9 @@
-export enum Platform {
-  BINANCE = 'binance',
-  BINGX = 'bingx'
-}
+export const Platform = {
+  BINANCE: 'binance',
+  BINGX: 'bingx'
+} as const;
+
+export type Platform = typeof Platform[keyof typeof Platform];
 
 export interface PlatformConfig {
   name: string;
