@@ -75,8 +75,8 @@ export default function TradeLogTab({ data, onUpdateData }: TradeLogTabProps) {
         // Recalculate asset data based on remaining trades
         const assetIndex = data.assets.findIndex(asset => asset.ticker === tradeToDelete.ticker);
         if (assetIndex !== -1) {
-          const buyTrades = assetTrades.filter(trade => trade.type === 'BUY');
-          const sellTrades = assetTrades.filter(trade => trade.type === 'SELL');
+          const buyTrades = assetTrades.filter(trade => trade.action === 'BUY' || trade.action === 'DCA');
+          const sellTrades = assetTrades.filter(trade => trade.action === 'SELL');
           
           const totalBought = buyTrades.reduce((sum, trade) => sum + trade.quantity, 0);
           const totalSold = sellTrades.reduce((sum, trade) => sum + trade.quantity, 0);

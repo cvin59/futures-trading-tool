@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Wifi, WifiOff, Cloud, CloudOff, RefreshCw, DollarSign, LogOut, User, ChevronUp, ChevronDown, TrendingUp } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { saveToFirestore, loadFromFirestore, subscribeToFirestore, type TradingData, signIn, signUp, signOut, auth } from './lib/firebase';
-import { Platform, PLATFORM_CONFIGS } from './platforms';
+import { Platform } from './platforms';
 
 // TypeScript interfaces
 interface Position {
@@ -116,7 +116,7 @@ const FuturesTradingTool = () => {
   });
 
   // Platform state using enum
-  const [platform, setPlatform] = useState<Platform>(() => {
+  const [platform, _setPlatform] = useState<Platform>(() => {
     if (typeof window !== 'undefined') {
       const saved = localStorage.getItem('futures-platform');
       return (saved as Platform) || Platform.BINANCE;
@@ -125,7 +125,7 @@ const FuturesTradingTool = () => {
   });
   
   const [showFeeSettings, setShowFeeSettings] = useState<boolean>(false);
-  const [showPlatformSettings, setShowPlatformSettings] = useState<boolean>(false);
+  const [_showPlatformSettings, _setShowPlatformSettings] = useState<boolean>(false);
   const [tempMarginValues, setTempMarginValues] = useState<Map<number, string>>(new Map());
   const [tempLeverageValues, setTempLeverageValues] = useState<Map<number, string>>(new Map());
   const [tempTPValues, setTempTPValues] = useState<Map<string, string>>(new Map()); // key: `${posId}-tp${level}`
@@ -149,8 +149,7 @@ const FuturesTradingTool = () => {
   const wsConnections = useRef<Map<number, WebSocket>>(new Map());
   const autoUpdateStatus = useRef<Map<number, boolean>>(new Map());
 
-  // Get platform configuration
-  const platformConfig = PLATFORM_CONFIGS[platform];
+  // Platform configuration available via PLATFORM_CONFIGS[platform] when needed
 
   // Save to localStorage whenever positions change
   useEffect(() => {

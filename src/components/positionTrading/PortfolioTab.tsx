@@ -149,7 +149,7 @@ export default function PortfolioTab({ data, onUpdateData }: PortfolioTabProps) 
               console.log(`❌ Failed to fetch ${ticker}:`, response.status, errorText);
             }
           } catch (formatError) {
-            console.log(`❌ Error with format ${ticker}:`, formatError.message);
+            console.log(`❌ Error with format ${ticker}:`, formatError instanceof Error ? formatError.message : String(formatError));
             continue;
           }
         }

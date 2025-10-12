@@ -69,7 +69,7 @@ export default function PositionTradingTool() {
   });
 
   // Debounced localStorage save to prevent conflicts
-  const [saveTimeoutId, setSaveTimeoutId] = useState<NodeJS.Timeout | null>(null);
+  const [saveTimeoutId, setSaveTimeoutId] = useState<number | null>(null);
 
   // Save to localStorage with debouncing to prevent conflicts during batch updates
   useEffect(() => {

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { TrendingDown, BarChart3, DollarSign, Target, Calendar } from 'lucide-react';
+import { TrendingDown, BarChart3, DollarSign, Target } from 'lucide-react';
 import type { PositionTradingData } from '../../types/positionTrading';
 
 interface DCAAnalysisTabProps {

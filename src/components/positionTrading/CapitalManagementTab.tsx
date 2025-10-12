@@ -64,8 +64,7 @@ export default function CapitalManagementTab({ data, onUpdateData }: CapitalMana
 
   const cashFlows = calculateCashFlows();
 
-  // Calculate current cash balance
-  const currentCashBalance = cashFlows.reduce((total, flow) => total + flow.amount, 0);
+  // Calculate current metrics
   const totalInvested = data.assets.reduce((sum, asset) => sum + asset.totalInvested, 0);
   const totalCurrentValue = data.assets.reduce((sum, asset) => sum + asset.currentValue, 0);
 

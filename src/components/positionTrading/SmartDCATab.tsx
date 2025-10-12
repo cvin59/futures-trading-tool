@@ -1,14 +1,11 @@
 import { useState, useMemo } from 'react';
 import { 
-  TrendingDown, 
-  DollarSign, 
   Target, 
   AlertTriangle, 
   Calendar, 
   TrendingUp,
   Settings,
   BarChart3,
-  CheckCircle,
   Clock,
   Zap
 } from 'lucide-react';
@@ -52,7 +49,7 @@ interface DCAExecution {
   notes?: string;
 }
 
-export default function SmartDCATab({ data, onUpdateData }: SmartDCATabProps) {
+export default function SmartDCATab({ data: _data, onUpdateData: _onUpdateData }: SmartDCATabProps) {
   const [activeConfig, setActiveConfig] = useState<SmartDCAConfig>({
     totalCapital: 10000,
     duration: 12,
