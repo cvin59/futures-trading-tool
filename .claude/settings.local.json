@@ -24,7 +24,8 @@
       "mcp__serena__insert_after_symbol",
       "Bash(git checkout:*)",
       "Bash(curl:*)",
-      "mcp__playwright__browser_handle_dialog"
+      "mcp__playwright__browser_handle_dialog",
+      "mcp__serena__think_about_task_adherence"
     ],
     "deny": [],
     "ask": []

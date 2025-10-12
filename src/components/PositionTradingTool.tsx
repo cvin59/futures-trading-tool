@@ -82,6 +82,7 @@ export default function PositionTradingTool() {
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<'connected' | 'disconnected' | 'syncing'>('disconnected');
+  const [isReceivingFromFirestore, setIsReceivingFromFirestore] = useState(false);
   
   // Initialize state from localStorage
   const [data, setData] = useState<PositionTradingData>(() => {
@@ -125,6 +126,10 @@ export default function PositionTradingTool() {
     const unsubscribe = subscribeToPositionTradingFirestore((firestoreData) => {
       if (firestoreData) {
         console.log('📡 Received position trading data from Firestore');
+        
+        // Set flag to prevent triggering save from useEffect
+        setIsReceivingFromFirestore(true);
+        
         setData({
           tradeLogs: firestoreData.tradeLogs || [],
           assets: firestoreData.assets || [],
@@ -135,6 +140,11 @@ export default function PositionTradingTool() {
           initialCapital: firestoreData.initialCapital || 10000,
           availableCash: firestoreData.availableCash || 10000
         });
+        
+        // Reset flag after a short delay to allow state update to complete
+        setTimeout(() => {
+          setIsReceivingFromFirestore(false);
+        }, 100);
       }
     });
 
@@ -144,9 +154,15 @@ export default function PositionTradingTool() {
     };
   }, [user]);
 
-  // Save to localStorage with debouncing to prevent conflicts during batch updates
+  // Debounced save with change detection to prevent unnecessary syncs
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    
+    // Skip save if we're currently receiving data from Firestore
+    if (isReceivingFromFirestore) {
+      console.log('📡 Skipping save - receiving from Firestore');
+      return;
+    }
 
     // Clear existing timeout
     if (saveTimeoutId) {
@@ -156,12 +172,22 @@ export default function PositionTradingTool() {
     // Set new timeout for saving
     const timeoutId = setTimeout(() => {
       console.log('💾 Saving to localStorage after debounce...');
-      localStorage.setItem('position-trading-data', JSON.stringify(data));
-      console.log('✅ localStorage save completed');
       
-      // Also save to Firestore if user is logged in
-      if (user) {
-        saveDataToFirestore();
+      // Get current stored data to compare
+      const currentStored = localStorage.getItem('position-trading-data');
+      const newDataString = JSON.stringify(data);
+      
+      // Only save if data actually changed
+      if (currentStored !== newDataString) {
+        localStorage.setItem('position-trading-data', newDataString);
+        console.log('✅ localStorage save completed');
+        
+        // Also save to Firestore if user is logged in and data actually changed
+        if (user) {
+          saveDataToFirestore();
+        }
+      } else {
+        console.log('📝 No changes detected, skipping save');
       }
     }, 500); // 500ms debounce
 
@@ -173,7 +199,7 @@ export default function PositionTradingTool() {
         clearTimeout(timeoutId);
       }
     };
-  }, [data, user]);
+  }, [data, user, isReceivingFromFirestore]);
 
   // Form states
   const [showAddTrade, setShowAddTrade] = useState(false);
@@ -323,37 +349,53 @@ export default function PositionTradingTool() {
   }
 
   const saveDataToFirestore = async () => {
-    if (!user) return;
+    if (!user || isReceivingFromFirestore) {
+      console.log('🚫 Skipping Firestore save - receiving from Firestore or no user');
+      return;
+    }
 
-    setCloudSyncStatus('syncing');
+    // Only set syncing status if we're not already syncing to prevent flicker
+    if (cloudSyncStatus !== 'syncing') {
+      setCloudSyncStatus('syncing');
+    }
+    
     console.log('☁️ Saving position trading data to Firestore...');
     
+    // Only include essential data for Firestore (exclude calculated fields)
     const firestoreData: PositionTradingFirestoreData = {
       tradeLogs: data.tradeLogs,
       assets: data.assets,
       takeProfitLevels: data.takeProfitLevels,
       dcaLevels: data.dcaLevels,
-      portfolioMetrics: data.portfolioMetrics,
-      alerts: data.alerts,
+      portfolioMetrics: portfolioMetrics, // Use calculated metrics
+      alerts: alerts, // Use calculated alerts
       initialCapital: data.initialCapital,
       availableCash: data.availableCash,
       lastUpdated: Date.now()
     };
 
     const success = await savePositionTradingToFirestore(firestoreData);
-    if (success) {
-      console.log('✅ Position trading data saved to Firestore');
-      setCloudSyncStatus('connected');
-    } else {
-      console.error('❌ Failed to save position trading data to Firestore');
-      setCloudSyncStatus('disconnected');
-    }
+    
+    // Use setTimeout to prevent rapid status changes that cause flicker
+    setTimeout(() => {
+      if (success) {
+        console.log('✅ Position trading data saved to Firestore');
+        setCloudSyncStatus('connected');
+      } else {
+        console.error('❌ Failed to save position trading data to Firestore');
+        setCloudSyncStatus('disconnected');
+      }
+    }, 100); // Small delay to prevent flicker
   };
 
   const loadDataFromFirestore = async () => {
     if (!user) return;
 
     console.log('📥 Loading position trading data from Firestore...');
+    
+    // Set flag to prevent save during load
+    setIsReceivingFromFirestore(true);
+    
     const firestoreData = await loadPositionTradingFromFirestore();
     
     if (firestoreData) {
@@ -369,6 +411,11 @@ export default function PositionTradingTool() {
         availableCash: firestoreData.availableCash || 10000
       });
     }
+    
+    // Reset flag after load completes
+    setTimeout(() => {
+      setIsReceivingFromFirestore(false);
+    }, 100);
   };
 
   // Auth functions
@@ -656,29 +703,7 @@ export default function PositionTradingTool() {
         capitalAllocation: 40
       }
     ];
-  };
-
-  return (
-    <div className="bg-gray-900 text-gray-100 min-h-screen">
-      <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6 px-4 lg:px-6 xl:px-8 py-4 lg:py-6">
-        
-        {/* Header */}
-        <div className="flex justify-between items-start py-4">
-          <div className="text-center flex-1 space-y-2">
-            <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">
-              Position Trading Manager
-            </h1>
-            <p className="text-gray-400">Long-term Investment • DCA Strategy • Take Profit Planning</p>
-          </div>
-          
-          {/* Cloud Sync Status */}
-          <div className="flex items-center gap-3">
-            {/* Cloud Status Indicator */}
-            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${
-              cloudSyncStatus === 'connected' ? 'border-green-500/30 bg-green-900/20' :
-              cloudSyncStatus === 'syncing' ? 'border-yellow-500/30 bg-yellow-900/20' :
-              'border-gray-500/30 bg-gray-800'
-            }`}>
+  };>
               {cloudSyncStatus === 'connected' ? (
                 <>
                   <Cloud size={16} className="text-green-400" />
