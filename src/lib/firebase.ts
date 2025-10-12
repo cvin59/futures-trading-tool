@@ -131,6 +131,19 @@ export interface TradingData {
   lastUpdated: number;
 }
 
+// Position Trading Data interface for Firestore
+export interface PositionTradingFirestoreData {
+  tradeLogs: any[];
+  assets: any[];
+  takeProfitLevels: any[];
+  dcaLevels: any[];
+  portfolioMetrics: any;
+  alerts: any[];
+  initialCapital: number;
+  availableCash: number;
+  lastUpdated: number;
+}
+
 export const saveToFirestore = async (data: TradingData) => {
   try {
     console.log('💾 saveToFirestore: Starting...');
@@ -209,6 +222,92 @@ export const subscribeToFirestore = (
 
   return () => {
     console.log('🛑 subscribeToFirestore: Unsubscribing');
+    if (unsubscribe) unsubscribe();
+  };
+};
+
+// ========== POSITION TRADING FIRESTORE FUNCTIONS ==========
+
+export const savePositionTradingToFirestore = async (data: PositionTradingFirestoreData) => {
+  try {
+    console.log('💾 savePositionTradingToFirestore: Starting...');
+    const user = await ensureAuth();
+    if (!user) {
+      console.log('⚠️ savePositionTradingToFirestore: No user authenticated');
+      return false;
+    }
+
+    const userDoc = doc(db, 'users', user.uid);
+    console.log('💾 savePositionTradingToFirestore: Writing to users/' + user.uid);
+    await setDoc(userDoc, {
+      positionTrading: {
+        ...data,
+        lastUpdated: Date.now(),
+      }
+    }, { merge: true });
+
+    console.log('✅ savePositionTradingToFirestore: Success');
+    return true;
+  } catch (error) {
+    console.error('❌ savePositionTradingToFirestore: Error:', error);
+    return false;
+  }
+};
+
+export const loadPositionTradingFromFirestore = async (): Promise<PositionTradingFirestoreData | null> => {
+  try {
+    console.log('📥 loadPositionTradingFromFirestore: Starting...');
+    const user = await ensureAuth();
+    if (!user) {
+      console.log('⚠️ loadPositionTradingFromFirestore: No user authenticated');
+      return null;
+    }
+
+    const userDoc = doc(db, 'users', user.uid);
+    console.log('📥 loadPositionTradingFromFirestore: Reading from users/' + user.uid);
+    const docSnap = await getDoc(userDoc);
+
+    if (docSnap.exists() && docSnap.data().positionTrading) {
+      console.log('✅ loadPositionTradingFromFirestore: Data found');
+      return docSnap.data().positionTrading as PositionTradingFirestoreData;
+    }
+    console.log('⚠️ loadPositionTradingFromFirestore: No position trading data found');
+    return null;
+  } catch (error) {
+    console.error('❌ loadPositionTradingFromFirestore: Error:', error);
+    return null;
+  }
+};
+
+export const subscribeToPositionTradingFirestore = (
+  callback: (data: PositionTradingFirestoreData | null) => void
+) => {
+  let unsubscribe: (() => void) | null = null;
+
+  console.log('👂 subscribeToPositionTradingFirestore: Starting subscription...');
+  ensureAuth().then((user) => {
+    if (!user) {
+      console.log('⚠️ subscribeToPositionTradingFirestore: No user authenticated');
+      return;
+    }
+
+    const userDoc = doc(db, 'users', user.uid);
+    console.log('👂 subscribeToPositionTradingFirestore: Listening to users/' + user.uid);
+    unsubscribe = onSnapshot(userDoc, (doc) => {
+      if (doc.exists() && doc.data().positionTrading) {
+        console.log('📡 subscribeToPositionTradingFirestore: Data update received');
+        callback(doc.data().positionTrading as PositionTradingFirestoreData);
+      } else {
+        console.log('📡 subscribeToPositionTradingFirestore: No position trading data');
+        callback(null);
+      }
+    }, (error) => {
+      console.error('❌ subscribeToPositionTradingFirestore: Error:', error);
+    });
+  });
+
+  return () => {
+    console.log('🛑 subscribeToPositionTradingFirestore: Unsubscribing');
     if (unsubscribe) unsubscribe();
   };
 };

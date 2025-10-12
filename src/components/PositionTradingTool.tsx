@@ -8,7 +8,11 @@ import {
   BarChart3,
   Bell,
   Zap,
-  Settings
+  Settings,
+  Cloud,
+  CloudOff,
+  LogOut,
+  User
 } from 'lucide-react';
 import type { 
   PositionTradingData, 
@@ -19,6 +23,20 @@ import type {
   Alert,
   PortfolioMetrics 
 } from '../types/positionTrading';
+import { onAuthStateChanged } from 'firebase/auth';
+import { 
+  savePositionTradingToFirestore, 
+  loadPositionTradingFromFirestore, 
+  subscribeToPositionTradingFirestore,
+  signIn, 
+  signUp, 
+  signOut, 
+  auth,
+  getCurrentUser,
+  type PositionTradingFirestoreData 
+} from '../lib/firebase';
+import { AuthModal } from './AuthModal';
+import type { AuthMode, AuthForm } from '../types/trading';
 
 // Import tab components
 import DashboardTab from './positionTrading/DashboardTab';
@@ -56,6 +74,15 @@ const TRADING_RULES = {
 export default function PositionTradingTool() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'tradelog' | 'portfolio' | 'takeprofit' | 'smartdca' | 'dcaanalysis' | 'capital' | 'alerts' | 'performance'>('dashboard');
   
+  // Firebase Auth States
+  const [user, setUser] = useState(getCurrentUser());
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authForm, setAuthForm] = useState<AuthForm>({ email: '', password: '' });
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<'connected' | 'disconnected' | 'syncing'>('disconnected');
+  
   // Initialize state from localStorage
   const [data, setData] = useState<PositionTradingData>(() => {
     if (typeof window === 'undefined') return getInitialData();
@@ -71,6 +98,52 @@ export default function PositionTradingTool() {
   // Debounced localStorage save to prevent conflicts
   const [saveTimeoutId, setSaveTimeoutId] = useState<number | null>(null);
 
+  // Auth state listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log('🔐 Auth state changed:', user?.uid || 'No user');
+      setUser(user);
+      if (user) {
+        setCloudSyncStatus('connected');
+        setShowAuthModal(false);
+        setAuthError('');
+        // Load data from Firestore when user logs in
+        loadDataFromFirestore();
+      } else {
+        setCloudSyncStatus('disconnected');
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Cloud sync subscription
+  useEffect(() => {
+    if (!user) return;
+
+    console.log('👂 Setting up Firestore subscription for position trading...');
+    const unsubscribe = subscribeToPositionTradingFirestore((firestoreData) => {
+      if (firestoreData) {
+        console.log('📡 Received position trading data from Firestore');
+        setData({
+          tradeLogs: firestoreData.tradeLogs || [],
+          assets: firestoreData.assets || [],
+          takeProfitLevels: firestoreData.takeProfitLevels || [],
+          dcaLevels: firestoreData.dcaLevels || [],
+          portfolioMetrics: firestoreData.portfolioMetrics || getInitialData().portfolioMetrics,
+          alerts: firestoreData.alerts || [],
+          initialCapital: firestoreData.initialCapital || 10000,
+          availableCash: firestoreData.availableCash || 10000
+        });
+      }
+    });
+
+    return () => {
+      console.log('🛑 Cleaning up Firestore subscription');
+      unsubscribe();
+    };
+  }, [user]);
+
   // Save to localStorage with debouncing to prevent conflicts during batch updates
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -85,6 +158,11 @@ export default function PositionTradingTool() {
       console.log('💾 Saving to localStorage after debounce...');
       localStorage.setItem('position-trading-data', JSON.stringify(data));
       console.log('✅ localStorage save completed');
+      
+      // Also save to Firestore if user is logged in
+      if (user) {
+        saveDataToFirestore();
+      }
     }, 500); // 500ms debounce
 
     setSaveTimeoutId(timeoutId);
@@ -95,7 +173,7 @@ export default function PositionTradingTool() {
         clearTimeout(timeoutId);
       }
     };
-  }, [data]);
+  }, [data, user]);
 
   // Form states
   const [showAddTrade, setShowAddTrade] = useState(false);
@@ -243,6 +321,94 @@ export default function PositionTradingTool() {
       availableCash: 10000
     };
   }
+
+  const saveDataToFirestore = async () => {
+    if (!user) return;
+
+    setCloudSyncStatus('syncing');
+    console.log('☁️ Saving position trading data to Firestore...');
+    
+    const firestoreData: PositionTradingFirestoreData = {
+      tradeLogs: data.tradeLogs,
+      assets: data.assets,
+      takeProfitLevels: data.takeProfitLevels,
+      dcaLevels: data.dcaLevels,
+      portfolioMetrics: data.portfolioMetrics,
+      alerts: data.alerts,
+      initialCapital: data.initialCapital,
+      availableCash: data.availableCash,
+      lastUpdated: Date.now()
+    };
+
+    const success = await savePositionTradingToFirestore(firestoreData);
+    if (success) {
+      console.log('✅ Position trading data saved to Firestore');
+      setCloudSyncStatus('connected');
+    } else {
+      console.error('❌ Failed to save position trading data to Firestore');
+      setCloudSyncStatus('disconnected');
+    }
+  };
+
+  const loadDataFromFirestore = async () => {
+    if (!user) return;
+
+    console.log('📥 Loading position trading data from Firestore...');
+    const firestoreData = await loadPositionTradingFromFirestore();
+    
+    if (firestoreData) {
+      console.log('✅ Position trading data loaded from Firestore');
+      setData({
+        tradeLogs: firestoreData.tradeLogs || [],
+        assets: firestoreData.assets || [],
+        takeProfitLevels: firestoreData.takeProfitLevels || [],
+        dcaLevels: firestoreData.dcaLevels || [],
+        portfolioMetrics: firestoreData.portfolioMetrics || getInitialData().portfolioMetrics,
+        alerts: firestoreData.alerts || [],
+        initialCapital: firestoreData.initialCapital || 10000,
+        availableCash: firestoreData.availableCash || 10000
+      });
+    }
+  };
+
+  // Auth functions
+  const handleAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    setAuthError('');
+
+    try {
+      let result;
+      if (authMode === 'login') {
+        result = await signIn(authForm.email, authForm.password);
+      } else {
+        result = await signUp(authForm.email, authForm.password);
+      }
+
+      if (result.success) {
+        setShowAuthModal(false);
+        setAuthForm({ email: '', password: '' });
+      } else {
+        setAuthError(result.error || 'Authentication failed');
+      }
+    } catch (error) {
+      setAuthError('An unexpected error occurred');
+      console.error('Auth error:', error);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    console.log('👋 Signing out...');
+    const result = await signOut();
+    if (result.success) {
+      console.log('✅ Signed out successfully');
+      // Clear local data on logout
+      setData(getInitialData());
+      localStorage.removeItem('position-trading-data');
+    }
+  };
 
   const addTrade = () => {
     if (!newTrade.ticker || !newTrade.price || !newTrade.quantity) return;
@@ -497,11 +663,67 @@ export default function PositionTradingTool() {
       <div className="max-w-[1600px] mx-auto space-y-4 sm:space-y-6 px-4 lg:px-6 xl:px-8 py-4 lg:py-6">
         
         {/* Header */}
-        <div className="text-center space-y-2 py-4">
-          <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">
-            Position Trading Manager
-          </h1>
-          <p className="text-gray-400">Long-term Investment • DCA Strategy • Take Profit Planning</p>
+        <div className="flex justify-between items-start py-4">
+          <div className="text-center flex-1 space-y-2">
+            <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">
+              Position Trading Manager
+            </h1>
+            <p className="text-gray-400">Long-term Investment • DCA Strategy • Take Profit Planning</p>
+          </div>
+          
+          {/* Cloud Sync Status */}
+          <div className="flex items-center gap-3">
+            {/* Cloud Status Indicator */}
+            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${
+              cloudSyncStatus === 'connected' ? 'border-green-500/30 bg-green-900/20' :
+              cloudSyncStatus === 'syncing' ? 'border-yellow-500/30 bg-yellow-900/20' :
+              'border-gray-500/30 bg-gray-800'
+            }`}>
+              {cloudSyncStatus === 'connected' ? (
+                <>
+                  <Cloud size={16} className="text-green-400" />
+                  <span className="text-green-400 text-sm">Synced</span>
+                </>
+              ) : cloudSyncStatus === 'syncing' ? (
+                <>
+                  <Cloud size={16} className="text-yellow-400 animate-pulse" />
+                  <span className="text-yellow-400 text-sm">Syncing...</span>
+                </>
+              ) : (
+                <>
+                  <CloudOff size={16} className="text-gray-400" />
+                  <span className="text-gray-400 text-sm">Local</span>
+                </>
+              )}
+            </div>
+
+            {/* User Auth */}
+            {user ? (
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 px-3 py-2 bg-purple-900/20 border border-purple-500/30 rounded-lg">
+                  <User size={16} className="text-purple-400" />
+                  <span className="text-purple-400 text-sm">
+                    {user.email?.split('@')[0] || 'User'}
+                  </span>
+                </div>
+                <button
+                  onClick={handleSignOut}
+                  className="flex items-center gap-2 px-3 py-2 bg-red-900/20 border border-red-500/30 rounded-lg hover:bg-red-900/30 transition-colors"
+                >
+                  <LogOut size={16} className="text-red-400" />
+                  <span className="text-red-400 text-sm">Sign Out</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAuthModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
+              >
+                <Cloud size={16} />
+                <span className="text-sm">Sign In to Sync</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Alert Bar */}
@@ -788,6 +1010,18 @@ export default function PositionTradingTool() {
         )}
 
       </div>
+
+      {/* Auth Modal */}
+      <AuthModal
+        show={showAuthModal}
+        authMode={authMode}
+        setAuthMode={setAuthMode}
+        authForm={authForm}
+        setAuthForm={setAuthForm}
+        authError={authError}
+        authLoading={authLoading}
+        onSubmit={handleAuthSubmit}
+      />
     </div>
   );
 }
